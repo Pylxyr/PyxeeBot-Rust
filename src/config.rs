@@ -113,11 +113,11 @@ impl Config {
             ytdlp_socket_timeout: int_env("YTDLP_SOCKET_TIMEOUT", 15).max(5) as u32,
             ytdlp_prefetch_count: int_env("YTDLP_PREFETCH_COUNT", 1).max(0) as usize,
             ytdlp_concurrent_extracts: int_env("YTDLP_CONCURRENT_EXTRACTS", 1).max(1) as usize,
-            ytdlp_curation_concurrency: int_env("YTDLP_CURATION_CONCURRENCY", 3).max(1).min(6)
+            ytdlp_curation_concurrency: int_env("YTDLP_CURATION_CONCURRENCY", 3).clamp(1, 6)
                 as usize,
             near_end_prefetch_secs: int_env("NEAR_END_PREFETCH_SECONDS", 30).max(0) as u64,
-            opus_bitrate_kbps: int_env("OPUS_BITRATE_KBPS", 64).max(64).min(256) as u32,
-            ytdlp_search_results: int_env("YTDLP_SEARCH_RESULTS", 5).max(1).min(10) as usize,
+            opus_bitrate_kbps: int_env("OPUS_BITRATE_KBPS", 64).clamp(64, 256) as u32,
+            ytdlp_search_results: int_env("YTDLP_SEARCH_RESULTS", 5).clamp(1, 10) as usize,
             ytdlp_resolve_cache_size: int_env("YTDLP_RESOLVE_CACHE_SIZE", 128).max(16) as u64,
             ytdlp_resolve_cache_ttl_secs: int_env("YTDLP_RESOLVE_CACHE_TTL_SECONDS", 1800).max(60)
                 as u64,
