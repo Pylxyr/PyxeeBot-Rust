@@ -1,0 +1,8 @@
+# audit.toml
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0104", # rustls-webpki via serenity 0.12.5's tokio-tungstenite ^0.21 pin — blocked on upstream serenity release
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0098",
+]
