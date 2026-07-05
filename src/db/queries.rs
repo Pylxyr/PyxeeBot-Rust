@@ -392,7 +392,7 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        if count % TRIM_EVERY_N_WRITES == 0 {
+        if count.is_multiple_of(TRIM_EVERY_N_WRITES) {
             sqlx::query(
                 "DELETE FROM play_history
                  WHERE guild_id = ? AND id NOT IN (
@@ -407,7 +407,7 @@ impl Database {
             .await?;
         }
 
-        if count % CHECKPOINT_EVERY_N_WRITES == 0 {
+        if count.is_multiple_of(CHECKPOINT_EVERY_N_WRITES) {
             sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
                 .execute(&self.pool)
                 .await?;
