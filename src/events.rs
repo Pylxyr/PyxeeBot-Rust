@@ -1,10 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use poise::serenity_prelude::{self as serenity, FullEvent};
+use poise::serenity_prelude::{
+    self as serenity, ComponentInteraction, CreateInteractionResponse, EditInteractionResponse,
+    FullEvent, Interaction,
+};
 use poise::FrameworkContext;
 
 use crate::bot::BotData;
+use crate::components;
 
 pub async fn handle_event(
     ctx: &serenity::Context,
@@ -12,10 +16,124 @@ pub async fn handle_event(
     _framework: FrameworkContext<'_, Arc<BotData>, anyhow::Error>,
     data: &Arc<BotData>,
 ) -> Result<(), anyhow::Error> {
-    if let FullEvent::VoiceStateUpdate { old, new } = event {
-        handle_voice_state_update(ctx, data, old.as_ref(), new).await;
+    match event {
+        FullEvent::VoiceStateUpdate { old, new } => {
+            handle_voice_state_update(ctx, data, old.as_ref(), new).await;
+        }
+        FullEvent::InteractionCreate { interaction } => {
+            if let Interaction::Component(component) = interaction {
+                handle_component_interaction(ctx, data, component).await;
+            }
+        }
+        _ => {}
     }
     Ok(())
+}
+
+async fn handle_component_interaction(
+    ctx: &serenity::Context,
+    data: &Arc<BotData>,
+    interaction: &ComponentInteraction,
+) {
+    let Some(guild_id) = interaction.guild_id else {
+        return;
+    };
+    let custom_id = interaction.data.custom_id.as_str();
+
+    match custom_id {
+        components::NP_PAUSE | components::NP_SKIP | components::NP_LOOP => {
+            let Some(player) = data.players.get(&guild_id).map(|p| p.clone()) else {
+                return;
+            };
+            match custom_id {
+                components::NP_PAUSE => {
+                    if player.snapshot().is_paused {
+                        player.resume();
+                    } else {
+                        player.pause();
+                    }
+                }
+                components::NP_SKIP => player.skip(),
+                components::NP_LOOP => {
+                    player.cycle_loop_mode().await;
+                }
+                _ => unreachable!(),
+            }
+            let snapshot = player.snapshot();
+            let content = components::now_playing_content(&snapshot);
+            let buttons = components::now_playing_buttons(&snapshot);
+            let _ = interaction
+                .create_response(ctx, components::update_response(content, buttons))
+                .await;
+        }
+        components::SEARCH_PICK => handle_search_pick(ctx, data, interaction, guild_id).await,
+        _ => {}
+    }
+}
+
+async fn handle_search_pick(
+    ctx: &serenity::Context,
+    data: &Arc<BotData>,
+    interaction: &ComponentInteraction,
+    guild_id: serenity::GuildId,
+) {
+    let Some(idx) = components::selected_index(interaction) else {
+        return;
+    };
+    let Some(results) = data.search_debug.get(&guild_id) else {
+        let _ = interaction
+            .create_response(
+                ctx,
+                components::update_response("That search has expired.", Vec::new()),
+            )
+            .await;
+        return;
+    };
+    let Some((track, _)) = results.get(idx) else {
+        return;
+    };
+
+    let user_id = interaction.user.id;
+    let channel_id = ctx
+        .cache
+        .guild(guild_id)
+        .and_then(|g| g.voice_states.get(&user_id).and_then(|vs| vs.channel_id));
+    let Some(channel_id) = channel_id else {
+        let _ = interaction
+            .create_response(
+                ctx,
+                components::update_response("Join a voice channel first.", Vec::new()),
+            )
+            .await;
+        return;
+    };
+
+    let mut track = track.clone();
+    track.requester_id = user_id.get();
+    let title = track.escaped_title();
+
+    // Component interactions must be acknowledged within 3 seconds. The
+    // play() call below does search resolution and a voice connect, both of
+    // which routinely take longer than that — so acknowledge first (no
+    // loading indicator shown to the user) and edit the response once done.
+    let _ = interaction
+        .create_response(ctx, CreateInteractionResponse::Acknowledge)
+        .await;
+
+    let player = data.player_for(guild_id).await;
+    let content = match player.play(track, false, channel_id).await {
+        Ok(outcome) if outcome.now_playing => format!("Now playing: **{title}**"),
+        Ok(outcome) => format!("Queued **{title}** — position {}.", outcome.position),
+        Err(e) => format!("Error: {e}"),
+    };
+    let _ = interaction
+        .edit_response(
+            ctx,
+            EditInteractionResponse::new()
+                .content(content)
+                .components(Vec::new()),
+        )
+        .await;
 }
 
 async fn handle_voice_state_update(
