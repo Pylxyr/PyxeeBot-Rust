@@ -38,6 +38,7 @@ pub fn all() -> Vec<poise::Command<Arc<BotData>, Error>> {
         queue::toprequestors(),
         // search
         search::search(),
+        search::why(),
         // playlist (subcommands registered internally)
         playlist::playlist(),
         // curation
