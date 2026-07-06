@@ -18,7 +18,9 @@ pub async fn stay(ctx: Context<'_>) -> anyhow::Result<()> {
     data.db
         .set_stay_connected(guild_id.get(), new_value, &data.config.default_prefix)
         .await?;
-    data.player_for(guild_id).set_stay_connected(new_value);
+    data.player_for(guild_id)
+        .await
+        .set_stay_connected(new_value);
     let state = if new_value { "enabled" } else { "disabled" };
     ctx.say(format!("24/7 mode {state}.")).await?;
     Ok(())
