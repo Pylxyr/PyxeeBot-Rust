@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use dashmap::DashMap;
+use moka::sync::Cache;
 use poise::serenity_prelude as serenity;
 use serenity::GatewayIntents;
 use songbird::serenity::SerenityInit;
@@ -13,7 +15,9 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::extraction::Extractor;
 use crate::lastfm::LastFmClient;
+use crate::models::Track;
 use crate::player::GuildPlayer;
+use crate::scoring::ScoreBreakdown;
 
 pub struct BotData {
     pub config: Arc<Config>,
@@ -23,11 +27,21 @@ pub struct BotData {
     pub lastfm: Option<LastFmClient>,
     pub http_client: reqwest::Client,
     pub players: DashMap<serenity::GuildId, Arc<GuildPlayer>>,
+    /// Last search's ranked results + score breakdowns per guild, for `!why`.
+    pub search_debug: Cache<serenity::GuildId, Arc<Vec<(Track, ScoreBreakdown)>>>,
 }
 
 impl BotData {
-    /// Returns the existing player for this guild, or spawns a new one.
-    pub fn player_for(&self, guild_id: serenity::GuildId) -> Arc<GuildPlayer> {
+    /// Returns the existing player for this guild, or spawns a new one —
+    /// loading its persisted stay_connected/autoplay settings first, so a
+    /// freshly-spawned player (e.g. after a restart) honours them from the
+    /// start rather than defaulting to off until someone re-toggles them.
+    pub async fn player_for(&self, guild_id: serenity::GuildId) -> Arc<GuildPlayer> {
+        if let Some(existing) = self.players.get(&guild_id) {
+            return existing.clone();
+        }
+        let stay_connected = self.db.get_stay_connected(guild_id.get()).await;
+        let autoplay = self.db.get_autoplay(guild_id.get()).await;
         self.players
             .entry(guild_id)
             .or_insert_with(|| {
@@ -36,7 +50,10 @@ impl BotData {
                     self.songbird.clone(),
                     self.extractor.clone(),
                     self.http_client.clone(),
+                    self.lastfm.clone(),
                     self.config.clone(),
+                    stay_connected,
+                    autoplay,
                 )
             })
             .clone()
@@ -82,6 +99,14 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
         commands: crate::commands::all(),
         prefix_options: poise::PrefixFrameworkOptions {
             prefix: Some(config.default_prefix.clone()),
+            dynamic_prefix: Some(|ctx| {
+                Box::pin(async move {
+                    let Some(guild_id) = ctx.guild_id else {
+                        return Ok(None);
+                    };
+                    Ok(ctx.data.db.get_prefix(guild_id.get()).await)
+                })
+            }),
             case_insensitive_commands: true,
             ..Default::default()
         },
@@ -117,6 +142,10 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     lastfm,
                     http_client,
                     players: DashMap::new(),
+                    search_debug: Cache::builder()
+                        .max_capacity(200)
+                        .time_to_live(Duration::from_secs(30 * 60))
+                        .build(),
                 }))
             })
         })
