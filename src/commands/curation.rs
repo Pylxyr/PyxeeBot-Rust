@@ -52,7 +52,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         }
     };
 
-    let player = data.player_for(guild_id);
+    let player = data.player_for(guild_id).await;
     let mut queued = Vec::new();
     for similar_artist in &similar {
         match data.extractor.search(similar_artist, author_id, true).await {
@@ -93,10 +93,6 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
 }
 
 /// Toggle autoplay (queues a similar track instead of going idle).
-///
-/// Note: this persists the setting, but the player does not yet act on it —
-/// automatically queuing a similar track when the queue empties needs wiring
-/// into the player actor, which isn't connected in this delivery.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn autoplay(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -108,6 +104,7 @@ pub async fn autoplay(ctx: Context<'_>) -> anyhow::Result<()> {
     data.db
         .set_autoplay(guild_id.get(), new_value, &data.config.default_prefix)
         .await?;
+    data.player_for(guild_id).await.set_autoplay(new_value);
     let state = if new_value { "enabled" } else { "disabled" };
     ctx.say(format!("Autoplay {state}.")).await?;
     Ok(())
