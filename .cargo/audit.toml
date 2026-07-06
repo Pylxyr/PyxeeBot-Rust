@@ -1,0 +1,10 @@
+[advisories]
+ignore = [
+    # rustls-webpki via serenity 0.12.5's tokio-tungstenite ^0.21 pin.
+    # Not fixable from our Cargo.toml — blocked on an upstream serenity
+    # release bumping tokio-tungstenite. Re-check when serenity updates.
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0098",
+]
