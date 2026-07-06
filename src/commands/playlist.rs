@@ -21,7 +21,7 @@ pub async fn save(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    let snapshot = ctx.data().player_for(guild_id).snapshot();
+    let snapshot = ctx.data().player_for(guild_id).await.snapshot();
 
     let mut all_tracks: Vec<&Track> = Vec::new();
     if let Some(current) = &snapshot.current {
@@ -84,7 +84,7 @@ pub async fn load(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let player = ctx.data().player_for(guild_id);
+    let player = ctx.data().player_for(guild_id).await;
     let mut queued = 0usize;
     for entry in &entries {
         let track = Track {
