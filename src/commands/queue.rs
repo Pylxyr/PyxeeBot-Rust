@@ -7,7 +7,7 @@ pub async fn queue(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    let snapshot = ctx.data().player_for(guild_id).snapshot();
+    let snapshot = ctx.data().player_for(guild_id).await.snapshot();
 
     if snapshot.current.is_none() && snapshot.queue.is_empty() {
         ctx.say("Queue is empty.").await?;
@@ -46,7 +46,7 @@ pub async fn clear(ctx: Context<'_>) -> anyhow::Result<()> {
     if !require_dj(ctx).await? {
         return Ok(());
     }
-    let n = ctx.data().player_for(guild_id).clear_queue().await;
+    let n = ctx.data().player_for(guild_id).await.clear_queue().await;
     ctx.say(format!("Cleared {n} track(s) from the queue."))
         .await?;
     Ok(())
@@ -61,7 +61,7 @@ pub async fn shuffle(ctx: Context<'_>) -> anyhow::Result<()> {
     if !require_dj(ctx).await? {
         return Ok(());
     }
-    ctx.data().player_for(guild_id).shuffle();
+    ctx.data().player_for(guild_id).await.shuffle();
     ctx.say("Queue shuffled.").await?;
     Ok(())
 }
@@ -83,6 +83,7 @@ pub async fn move_track_cmd(ctx: Context<'_>, from: usize, to: usize) -> anyhow:
     let ok = ctx
         .data()
         .player_for(guild_id)
+        .await
         .move_track(from - 1, to - 1)
         .await;
     if ok {
@@ -105,7 +106,7 @@ pub async fn remove(ctx: Context<'_>, position: usize) -> anyhow::Result<()> {
             .await?;
         return Ok(());
     }
-    let player = ctx.data().player_for(guild_id);
+    let player = ctx.data().player_for(guild_id).await;
     let snapshot = player.snapshot();
     let is_requester = snapshot
         .queue
@@ -132,7 +133,7 @@ pub async fn history(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    let snapshot = ctx.data().player_for(guild_id).snapshot();
+    let snapshot = ctx.data().player_for(guild_id).await.snapshot();
     if snapshot.history.is_empty() {
         ctx.say("No history yet this session.").await?;
         return Ok(());
