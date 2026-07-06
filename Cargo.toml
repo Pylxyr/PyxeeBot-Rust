@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # Discord
 serenity  = { version = "0.12.5", default-features = false, features = [
-    "cache", "client", "gateway", "model", "rustls_backend",
+    "builder", "cache", "client", "collector", "gateway", "model", "rustls_backend",
 ] }
 poise     = "0.6.2"
 songbird  = { version = "0.6.0", default-features = false, features = [
@@ -55,7 +55,7 @@ tracing-appender   = "0.2.3"
 
 # Concurrency / caching
 dashmap = "6.2.1"
-moka    = { version = "0.12.15", features = ["future"] }
+moka    = { version = "0.12.15", features = ["future", "sync"] }
 
 # Fuzzy matching (scoring engine)
 rapidfuzz = "0.5.0"
