@@ -24,7 +24,7 @@ pub async fn join(ctx: Context<'_>) -> anyhow::Result<()> {
         ctx.say("Join a voice channel first.").await?;
         return Ok(());
     };
-    let player = ctx.data().player_for(guild_id);
+    let player = ctx.data().player_for(guild_id).await;
     match player.connect(channel_id).await {
         Ok(()) => ctx.say(format!("Joined <#{channel_id}>.")).await?,
         Err(e) => ctx.say(format!("Couldn't join: {e}")).await?,
@@ -38,7 +38,7 @@ pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    let player = ctx.data().player_for(guild_id);
+    let player = ctx.data().player_for(guild_id).await;
     match player.leave().await {
         Ok(()) => ctx.say("Left the voice channel.").await?,
         Err(e) => ctx.say(format!("Couldn't leave: {e}")).await?,
@@ -84,7 +84,7 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
         return Ok(());
     };
 
-    let player = data.player_for(guild_id);
+    let player = data.player_for(guild_id).await;
     let title = track.escaped_title();
     match player.play(track, false, channel_id).await {
         Ok(outcome) if outcome.now_playing => {
@@ -124,7 +124,7 @@ pub async fn skip(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    ctx.data().player_for(guild_id).skip();
+    ctx.data().player_for(guild_id).await.skip();
     ctx.say("Skipped.").await?;
     Ok(())
 }
@@ -135,7 +135,7 @@ pub async fn stop(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    ctx.data().player_for(guild_id).stop();
+    ctx.data().player_for(guild_id).await.stop();
     ctx.say("Stopped and cleared the queue.").await?;
     Ok(())
 }
@@ -146,7 +146,7 @@ pub async fn pause(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    ctx.data().player_for(guild_id).pause();
+    ctx.data().player_for(guild_id).await.pause();
     ctx.say("Paused.").await?;
     Ok(())
 }
@@ -157,7 +157,7 @@ pub async fn resume(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    ctx.data().player_for(guild_id).resume();
+    ctx.data().player_for(guild_id).await.resume();
     ctx.say("Resumed.").await?;
     Ok(())
 }
@@ -168,7 +168,7 @@ pub async fn previous(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    let ok = ctx.data().player_for(guild_id).previous().await;
+    let ok = ctx.data().player_for(guild_id).await.previous().await;
     if ok {
         ctx.say("Playing the previous track.").await?;
     } else {
@@ -189,7 +189,12 @@ pub async fn loop_cmd(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    let mode = ctx.data().player_for(guild_id).cycle_loop_mode().await;
+    let mode = ctx
+        .data()
+        .player_for(guild_id)
+        .await
+        .cycle_loop_mode()
+        .await;
     ctx.say(format!("Loop mode: {}", mode.label())).await?;
     Ok(())
 }
@@ -200,25 +205,14 @@ pub async fn nowplaying(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    let snapshot = ctx.data().player_for(guild_id).snapshot();
-    match snapshot.current {
-        Some(track) => {
-            let state = if snapshot.is_paused {
-                "Paused"
-            } else {
-                "Now playing"
-            };
-            ctx.say(format!(
-                "{state}: **{}** ({}) — requested by <@{}>",
-                track.escaped_title(),
-                track.duration_label(),
-                track.requester_id,
-            ))
-            .await?;
-        }
-        None => {
-            ctx.say("Nothing is playing right now.").await?;
-        }
-    }
+    let snapshot = ctx.data().player_for(guild_id).await.snapshot();
+    let content = crate::components::now_playing_content(&snapshot);
+    let buttons = crate::components::now_playing_buttons(&snapshot);
+    ctx.send(
+        poise::CreateReply::default()
+            .content(content)
+            .components(buttons),
+    )
+    .await?;
     Ok(())
 }
