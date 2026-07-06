@@ -1,5 +1,13 @@
 [advisories]
 ignore = [
+    # libcrux-chacha20poly1305 — pinned exactly at 0.0.7 by openmls (songbird's
+    # DAVE/MLS crypto dependency for voice E2EE). Pre-1.0 crates are pinned
+    # exactly under semver, so this needs openmls/songbird to bump it, not
+    # fixable from our Cargo.toml. DoS-only: requires the *calling* code
+    # (openmls) to pass a mismatched buffer during encrypt — not directly
+    # reachable by external input. Re-check when songbird updates.
+    "RUSTSEC-2026-0124",
+
     # rustls-webpki via serenity 0.12.5's tokio-tungstenite ^0.21 pin.
     # Not fixable from our Cargo.toml — blocked on an upstream serenity
     # release bumping tokio-tungstenite. Re-check when serenity updates.
