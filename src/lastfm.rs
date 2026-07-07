@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 const API_BASE: &str = "https://ws.audioscrobbler.com/2.0/";
 
+#[derive(Clone)]
 pub struct LastFmClient {
     api_key: String,
     http_client: reqwest::Client,

@@ -49,6 +49,25 @@ impl Extractor {
             .collect())
     }
 
+    /// Same as `search`, but also returns each track's score breakdown —
+    /// used by `!search`/`!why` to explain ranking decisions. Kept separate
+    /// from `search` so existing callers aren't affected.
+    pub async fn search_with_debug(
+        &self,
+        query: &str,
+        requester_id: u64,
+        curation_mode: bool,
+    ) -> Result<Vec<(Track, scoring::ScoreBreakdown)>> {
+        let count = self.config.ytdlp_search_results.max(1);
+        let args = ytdlp::search_args(&self.config, query, count);
+        let entries = self.run(&args).await?;
+        let ranked = scoring::rank_entries(query, entries, curation_mode);
+        Ok(ranked
+            .iter()
+            .map(|(item, bd)| (track_from_json(item, requester_id, query), bd.clone()))
+            .collect())
+    }
+
     /// Extracts metadata for a direct URL (no search/ranking involved).
     /// `flat_playlist` set true also picks up every entry of a playlist URL.
     pub async fn extract_url(

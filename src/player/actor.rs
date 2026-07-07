@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 use crate::config::Config;
 use crate::errors::{BotError, Result};
 use crate::extraction::Extractor;
+use crate::lastfm::LastFmClient;
 use crate::models::{LoopMode, Track};
 
 use super::lifecycle;
@@ -43,6 +44,7 @@ pub enum PlayerCommand {
         reply: oneshot::Sender<Result<()>>,
     },
     SetStay(bool),
+    SetAutoplay(bool),
     CycleLoop {
         reply: oneshot::Sender<LoopMode>,
     },
@@ -97,6 +99,7 @@ pub struct PlayerActor {
     songbird: Arc<Songbird>,
     extractor: Arc<Extractor>,
     http_client: reqwest::Client,
+    lastfm: Option<LastFmClient>,
     config: Arc<Config>,
     state: PlayerState,
     call: Option<Arc<AsyncMutex<Call>>>,
@@ -112,12 +115,16 @@ pub struct PlayerActor {
 }
 
 impl PlayerActor {
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         guild_id: GuildId,
         songbird: Arc<Songbird>,
         extractor: Arc<Extractor>,
         http_client: reqwest::Client,
+        lastfm: Option<LastFmClient>,
         config: Arc<Config>,
+        stay_connected: bool,
+        autoplay: bool,
     ) -> (
         mpsc::UnboundedSender<PlayerCommand>,
         watch::Receiver<PlayerSnapshot>,
@@ -130,8 +137,9 @@ impl PlayerActor {
             songbird,
             extractor,
             http_client,
+            lastfm,
             config,
-            state: PlayerState::new(max_queue_size),
+            state: PlayerState::new(max_queue_size, stay_connected, autoplay),
             call: None,
             channel_id: None,
             current_handle: None,
@@ -235,6 +243,9 @@ impl PlayerActor {
                     self.arm_idle_timer();
                 }
             }
+            PlayerCommand::SetAutoplay(enabled) => {
+                self.state.autoplay = enabled;
+            }
             PlayerCommand::CycleLoop { reply } => {
                 self.state.loop_mode = self.state.loop_mode.cycle();
                 let _ = reply.send(self.state.loop_mode);
@@ -289,14 +300,24 @@ impl PlayerActor {
                 }
                 self.current_handle = None;
                 self.is_paused = false;
-                if let Some(finished) = self.state.current.clone() {
+                let finished = self.state.current.clone();
+                if let Some(finished) = finished.clone() {
                     self.state.requeue_finished(finished);
                 }
                 if let Err(e) = self.advance_and_play().await {
                     tracing::warn!(guild_id = %self.guild_id, error = %e, "failed to advance queue");
                 }
-                if self.state.should_disconnect_when_idle() {
-                    self.arm_idle_timer();
+                if self.state.current.is_none() {
+                    if self.state.autoplay {
+                        if let Some(seed) = &finished {
+                            if let Err(e) = self.try_autoplay(seed).await {
+                                tracing::warn!(guild_id = %self.guild_id, error = %e, "autoplay failed");
+                            }
+                        }
+                    }
+                    if self.state.current.is_none() && self.state.should_disconnect_when_idle() {
+                        self.arm_idle_timer();
+                    }
                 }
             }
             PlayerCommand::ScheduleEmptyDisconnect => {
@@ -425,6 +446,40 @@ impl PlayerActor {
         Ok(())
     }
 
+    /// Autoplay: finds an artist similar to the just-finished track via
+    /// Last.fm, searches for a track by them, and plays it. A no-op if
+    /// Last.fm isn't configured or nothing playable turns up — the caller
+    /// falls back to arming the idle timer in that case.
+    async fn try_autoplay(&mut self, seed: &Track) -> Result<()> {
+        let Some(lastfm) = self.lastfm.clone() else {
+            return Ok(());
+        };
+        let seed_artist = clean_artist_name(&seed.uploader);
+        if seed_artist.is_empty() {
+            return Ok(());
+        }
+
+        let similar = lastfm
+            .similar_artists(&seed_artist, 5)
+            .await
+            .map_err(|e| BotError::Voice(e.to_string()))?;
+
+        for artist in similar {
+            if let Ok(tracks) = self
+                .extractor
+                .search(&artist, seed.requester_id, true)
+                .await
+            {
+                if let Some(track) = tracks.into_iter().next() {
+                    self.state.push_back(track);
+                    self.advance_and_play().await?;
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn arm_idle_timer(&mut self) {
         if self.idle_timer.is_some() {
             return;
@@ -449,4 +504,11 @@ impl PlayerActor {
             handle.abort();
         }
     }
+}
+
+/// Strips common YouTube auto-generated channel suffixes (e.g. the
+/// "Artist - Topic" pattern from YouTube Music) so the name reads as a
+/// plain artist for Last.fm's lookup.
+fn clean_artist_name(uploader: &str) -> String {
+    uploader.trim_end_matches(" - Topic").trim().to_owned()
 }

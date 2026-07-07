@@ -13,18 +13,20 @@ pub struct PlayerState {
     pub current: Option<Track>,
     pub loop_mode: LoopMode,
     pub stay_connected: bool,
+    pub autoplay: bool,
     pub total_duration: i64,
     pub max_queue_size: usize,
 }
 
 impl PlayerState {
-    pub fn new(max_queue_size: usize) -> Self {
+    pub fn new(max_queue_size: usize, stay_connected: bool, autoplay: bool) -> Self {
         Self {
             queue: VecDeque::new(),
             history: Vec::new(),
             current: None,
             loop_mode: LoopMode::Off,
-            stay_connected: false,
+            stay_connected,
+            autoplay,
             total_duration: 0,
             max_queue_size,
         }

@@ -16,6 +16,7 @@ pub use snapshot::PlayerSnapshot;
 use crate::config::Config;
 use crate::errors::{BotError, Result};
 use crate::extraction::Extractor;
+use crate::lastfm::LastFmClient;
 use crate::models::{LoopMode, Track};
 
 use actor::{PlayerActor, PlayerCommand};
@@ -29,15 +30,27 @@ pub struct GuildPlayer {
 }
 
 impl GuildPlayer {
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         guild_id: GuildId,
         songbird: Arc<Songbird>,
         extractor: Arc<Extractor>,
         http_client: reqwest::Client,
+        lastfm: Option<LastFmClient>,
         config: Arc<Config>,
+        stay_connected: bool,
+        autoplay: bool,
     ) -> Arc<Self> {
-        let (tx, snapshot_rx) =
-            PlayerActor::spawn(guild_id, songbird, extractor, http_client, config);
+        let (tx, snapshot_rx) = PlayerActor::spawn(
+            guild_id,
+            songbird,
+            extractor,
+            http_client,
+            lastfm,
+            config,
+            stay_connected,
+            autoplay,
+        );
         Arc::new(Self { tx, snapshot_rx })
     }
 
@@ -98,6 +111,10 @@ impl GuildPlayer {
 
     pub fn set_stay_connected(&self, enabled: bool) {
         self.send(PlayerCommand::SetStay(enabled));
+    }
+
+    pub fn set_autoplay(&self, enabled: bool) {
+        self.send(PlayerCommand::SetAutoplay(enabled));
     }
 
     pub async fn cycle_loop_mode(&self) -> LoopMode {
