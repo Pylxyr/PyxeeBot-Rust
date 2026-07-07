@@ -20,10 +20,10 @@ pub async fn handle_event(
         FullEvent::VoiceStateUpdate { old, new } => {
             handle_voice_state_update(ctx, data, old.as_ref(), new).await;
         }
-        FullEvent::InteractionCreate { interaction } => {
-            if let Interaction::Component(component) = interaction {
-                handle_component_interaction(ctx, data, component).await;
-            }
+        FullEvent::InteractionCreate {
+            interaction: Interaction::Component(component),
+        } => {
+            handle_component_interaction(ctx, data, component).await;
         }
         _ => {}
     }
