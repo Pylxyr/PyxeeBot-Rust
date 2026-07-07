@@ -28,7 +28,12 @@ fn now_playing_content_shows_nothing_playing_when_empty() {
 
 #[test]
 fn now_playing_content_shows_playing_state() {
-    let snapshot = PlayerSnapshot { current: Some(track("Song Title", 42)), is_paused: false, loop_mode: LoopMode::Off, ..Default::default() };
+    let snapshot = PlayerSnapshot {
+        current: Some(track("Song Title", 42)),
+        is_paused: false,
+        loop_mode: LoopMode::Off,
+        ..Default::default()
+    };
     let content = now_playing_content(&snapshot);
     assert!(content.contains("Now playing"));
     assert!(content.contains("Song Title"));
@@ -38,7 +43,11 @@ fn now_playing_content_shows_playing_state() {
 
 #[test]
 fn now_playing_content_shows_paused_state() {
-    let snapshot = PlayerSnapshot { current: Some(track("Song Title", 1)), is_paused: true, ..Default::default() };
+    let snapshot = PlayerSnapshot {
+        current: Some(track("Song Title", 1)),
+        is_paused: true,
+        ..Default::default()
+    };
     let content = now_playing_content(&snapshot);
     assert!(content.contains("Paused"));
     assert!(!content.contains("Now playing"));
@@ -46,7 +55,11 @@ fn now_playing_content_shows_paused_state() {
 
 #[test]
 fn now_playing_content_shows_loop_mode() {
-    let snapshot = PlayerSnapshot { current: Some(track("Song Title", 1)), loop_mode: LoopMode::All, ..Default::default() };
+    let snapshot = PlayerSnapshot {
+        current: Some(track("Song Title", 1)),
+        loop_mode: LoopMode::All,
+        ..Default::default()
+    };
     let content = now_playing_content(&snapshot);
     assert!(content.contains("Entire queue"));
 }
