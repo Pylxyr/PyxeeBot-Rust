@@ -66,6 +66,11 @@ rand      = "0.8"
 # Required by songbird's own EventHandler trait
 async-trait = "0.1"
 
+# Forces the resolver past RUSTSEC-2026-0204 (crossbeam-epoch is pulled in
+# transitively by dashmap/moka; this is a normal semver-compatible bump,
+# not a hard upstream pin like the audit.toml exceptions below).
+crossbeam-epoch = "0.9.20"
+
 [profile.release]
 opt-level      = 3
 lto            = "thin"
