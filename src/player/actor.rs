@@ -23,6 +23,9 @@ use super::snapshot::PlayerSnapshot;
 pub struct PlayOutcome {
     pub position: usize,
     pub now_playing: bool,
+    /// True if nothing could actually be played — the whole queue (including
+    /// what was just added) was tried and every candidate failed to resolve.
+    pub failed: bool,
 }
 
 pub enum PlayerCommand {
@@ -372,13 +375,19 @@ impl PlayerActor {
         front: bool,
         channel_id: ChannelId,
     ) -> Result<PlayOutcome> {
+        tracing::info!(guild_id = %self.guild_id, title = %track.title, front, "handle_play: received");
+
         if self.call.is_none() || self.channel_id != Some(channel_id) {
+            tracing::info!(guild_id = %self.guild_id, channel_id = %channel_id, "handle_play: connecting to voice channel");
+            let connect_start = std::time::Instant::now();
             let call = lifecycle::connect(&self.songbird, self.guild_id, channel_id).await?;
+            tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect finished");
             self.call = Some(call);
             self.channel_id = Some(channel_id);
         }
 
         if self.state.is_full() {
+            tracing::warn!(guild_id = %self.guild_id, "handle_play: queue is full");
             return Err(BotError::QueueFull);
         }
 
@@ -388,41 +397,67 @@ impl PlayerActor {
             self.state.push_back(track);
         }
 
-        let now_playing = if self.state.current.is_none() {
+        let mut now_playing = false;
+        let mut failed = false;
+        if self.state.current.is_none() {
+            tracing::info!(guild_id = %self.guild_id, "handle_play: nothing currently playing, advancing queue");
             self.cancel_idle_timer();
-            self.advance_and_play().await?;
-            true
-        } else {
-            false
-        };
+            now_playing = self.advance_and_play().await?;
+            failed = !now_playing;
+        }
 
+        tracing::info!(guild_id = %self.guild_id, now_playing, failed, "handle_play: done");
         Ok(PlayOutcome {
             position: self.state.queue.len(),
             now_playing,
+            failed,
         })
     }
 
     /// Pulls the next track off the queue and plays it, skipping over any
     /// track that fails to resolve (e.g. a dead link) rather than getting
-    /// stuck.
-    async fn advance_and_play(&mut self) -> Result<()> {
+    /// stuck. Returns true if something actually started playing, false if
+    /// the queue was exhausted without success.
+    async fn advance_and_play(&mut self) -> Result<bool> {
         loop {
             match self.state.advance() {
-                Some(track) => match self.play_track(track).await {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        tracing::warn!(guild_id = %self.guild_id, error = %e, "failed to play track, skipping");
-                        continue;
+                Some(track) => {
+                    let title = track.title.clone();
+                    tracing::info!(guild_id = %self.guild_id, title = %title, "advance_and_play: trying track");
+                    match self.play_track(track).await {
+                        Ok(()) => {
+                            tracing::info!(guild_id = %self.guild_id, title = %title, "advance_and_play: playing");
+                            return Ok(true);
+                        }
+                        Err(e) => {
+                            tracing::warn!(guild_id = %self.guild_id, title = %title, error = %e, "advance_and_play: failed to play track, skipping");
+                            continue;
+                        }
                     }
-                },
-                None => return Ok(()),
+                }
+                None => {
+                    tracing::info!(guild_id = %self.guild_id, "advance_and_play: queue exhausted, nothing playing");
+                    return Ok(false);
+                }
             }
         }
     }
 
     async fn play_track(&mut self, track: Track) -> Result<()> {
+        tracing::info!(guild_id = %self.guild_id, title = %track.title, url = %track.webpage_url, "play_track: resolving stream");
+        let resolve_start = std::time::Instant::now();
         let resolved = self.extractor.resolve_stream(&track).await?;
+        tracing::info!(
+            guild_id = %self.guild_id,
+            title = %track.title,
+            elapsed = ?resolve_start.elapsed(),
+            stream_url_len = resolved.stream_url.len(),
+            acodec = %resolved.acodec,
+            "play_track: stream resolved",
+        );
+
         let Some(call) = self.call.clone() else {
+            tracing::warn!(guild_id = %self.guild_id, "play_track: no active voice call");
             return Err(BotError::NotInVoiceChannel);
         };
 
@@ -431,6 +466,7 @@ impl PlayerActor {
         let generation = self.current_generation;
 
         let input: Input = HttpRequest::new(self.http_client.clone(), resolved.stream_url).into();
+        tracing::info!(guild_id = %self.guild_id, generation, "play_track: handing input to songbird");
         let handle = {
             let mut call_guard = call.lock().await;
             call_guard.play_only_input(input)
@@ -443,6 +479,7 @@ impl PlayerActor {
 
         self.current_handle = Some(handle);
         self.is_paused = false;
+        tracing::info!(guild_id = %self.guild_id, title = %track.title, "play_track: playback started");
         Ok(())
     }
 
@@ -458,11 +495,13 @@ impl PlayerActor {
         if seed_artist.is_empty() {
             return Ok(());
         }
+        tracing::info!(guild_id = %self.guild_id, seed_artist = %seed_artist, "try_autoplay: querying Last.fm");
 
         let similar = lastfm
             .similar_artists(&seed_artist, 5)
             .await
             .map_err(|e| BotError::Voice(e.to_string()))?;
+        tracing::info!(guild_id = %self.guild_id, count = similar.len(), "try_autoplay: got similar artists");
 
         for artist in similar {
             if let Ok(tracks) = self
@@ -471,12 +510,14 @@ impl PlayerActor {
                 .await
             {
                 if let Some(track) = tracks.into_iter().next() {
+                    tracing::info!(guild_id = %self.guild_id, artist = %artist, title = %track.title, "try_autoplay: queuing");
                     self.state.push_back(track);
                     self.advance_and_play().await?;
                     return Ok(());
                 }
             }
         }
+        tracing::info!(guild_id = %self.guild_id, "try_autoplay: nothing playable found");
         Ok(())
     }
 

@@ -58,12 +58,15 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
         return Ok(());
     };
 
+    tracing::info!(guild_id = %guild_id, user = %author_id, query = %query, "!play: received");
     let handle = ctx.say(format!("Searching for `{query}`...")).await?;
     let data = ctx.data();
 
+    let search_start = std::time::Instant::now();
     let tracks = match data.extractor.search(&query, author_id.get(), false).await {
         Ok(t) => t,
         Err(e) => {
+            tracing::warn!(guild_id = %guild_id, query = %query, elapsed = ?search_start.elapsed(), error = %e, "!play: search failed");
             handle
                 .edit(
                     ctx,
@@ -73,8 +76,10 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
             return Ok(());
         }
     };
+    tracing::info!(guild_id = %guild_id, query = %query, elapsed = ?search_start.elapsed(), results = tracks.len(), "!play: search finished");
 
     let Some(track) = tracks.into_iter().next() else {
+        tracing::info!(guild_id = %guild_id, query = %query, "!play: no results");
         handle
             .edit(
                 ctx,
@@ -86,7 +91,22 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
 
     let player = data.player_for(guild_id).await;
     let title = track.escaped_title();
-    match player.play(track, false, channel_id).await {
+    tracing::info!(guild_id = %guild_id, title = %track.title, url = %track.webpage_url, "!play: track selected, calling player.play");
+    let play_start = std::time::Instant::now();
+    let result = player.play(track, false, channel_id).await;
+    tracing::info!(guild_id = %guild_id, elapsed = ?play_start.elapsed(), ok = result.is_ok(), "!play: player.play returned");
+
+    match result {
+        Ok(outcome) if outcome.failed => {
+            handle
+                .edit(
+                    ctx,
+                    poise::CreateReply::default().content(format!(
+                        "Couldn't play **{title}** — check the bot logs for details."
+                    )),
+                )
+                .await?;
+        }
         Ok(outcome) if outcome.now_playing => {
             handle
                 .edit(

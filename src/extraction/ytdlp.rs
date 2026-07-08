@@ -47,13 +47,19 @@ pub fn search_args(config: &Config, query: &str, count: usize) -> Vec<String> {
 /// object (yt-dlp emits one JSON object per line for `ytsearchN:` and
 /// playlist-style targets, or a single line for a direct URL/query).
 pub async fn run_ytdlp(config: &Config, args: &[String]) -> Result<Vec<Value>> {
+    tracing::info!(cmd = %format!("yt-dlp {}", args.join(" ")), "run_ytdlp: spawning");
+    let start = std::time::Instant::now();
+
     let mut child = Command::new("yt-dlp")
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| BotError::YtDlp(format!("failed to spawn yt-dlp: {e}")))?;
+        .map_err(|e| {
+            tracing::error!(error = %e, "run_ytdlp: failed to spawn — is yt-dlp on PATH?");
+            BotError::YtDlp(format!("failed to spawn yt-dlp: {e}"))
+        })?;
 
     let mut stdout = child.stdout.take().expect("stdout was piped");
     let mut stderr = child.stderr.take().expect("stderr was piped");
@@ -70,23 +76,36 @@ pub async fn run_ytdlp(config: &Config, args: &[String]) -> Result<Vec<Value>> {
         (out_buf, err_buf)
     };
 
-    let (stdout_text, stderr_text) = timeout(
-        Duration::from_secs(config.ytdlp_extract_timeout_secs),
-        read_fut,
-    )
-    .await
-    .map_err(|_| BotError::YtDlp("yt-dlp timed out".to_owned()))?;
+    let timeout_secs = config.ytdlp_extract_timeout_secs;
+    let (stdout_text, stderr_text) = match timeout(Duration::from_secs(timeout_secs), read_fut)
+        .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::error!(elapsed = ?start.elapsed(), timeout_secs, "run_ytdlp: TIMED OUT — process will be killed (kill_on_drop)");
+            return Err(BotError::YtDlp(format!(
+                "yt-dlp timed out after {timeout_secs}s"
+            )));
+        }
+    };
 
     let status = child
         .wait()
         .await
         .map_err(|e| BotError::YtDlp(format!("yt-dlp wait failed: {e}")))?;
 
+    let elapsed = start.elapsed();
+    if !stderr_text.trim().is_empty() {
+        tracing::info!(elapsed = ?elapsed, status = %status, stderr = %stderr_text.trim(), "run_ytdlp: stderr output");
+    }
+
     let entries: Vec<Value> = stdout_text
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .collect();
+
+    tracing::info!(elapsed = ?elapsed, status = %status, stdout_lines = stdout_text.lines().count(), parsed_entries = entries.len(), "run_ytdlp: finished");
 
     if entries.is_empty() && !status.success() {
         let trimmed = stderr_text.trim();
@@ -95,6 +114,7 @@ pub async fn run_ytdlp(config: &Config, args: &[String]) -> Result<Vec<Value>> {
         } else {
             trimmed.to_owned()
         };
+        tracing::error!(elapsed = ?elapsed, status = %status, "run_ytdlp: failed, no entries parsed");
         return Err(BotError::YtDlp(msg));
     }
 

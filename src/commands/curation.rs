@@ -59,7 +59,11 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
             Ok(tracks) if !tracks.is_empty() => {
                 let track = tracks.into_iter().next().unwrap();
                 let title = track.escaped_title();
-                if player.play(track, false, channel_id).await.is_ok() {
+                if player
+                    .play(track, false, channel_id)
+                    .await
+                    .is_ok_and(|o| !o.failed)
+                {
                     queued.push(title);
                 }
             }

@@ -122,6 +122,9 @@ async fn handle_search_pick(
 
     let player = data.player_for(guild_id).await;
     let content = match player.play(track, false, channel_id).await {
+        Ok(outcome) if outcome.failed => {
+            format!("Couldn't play **{title}** — check the bot logs for details.")
+        }
         Ok(outcome) if outcome.now_playing => format!("Now playing: **{title}**"),
         Ok(outcome) => format!("Queued **{title}** — position {}.", outcome.position),
         Err(e) => format!("Error: {e}"),

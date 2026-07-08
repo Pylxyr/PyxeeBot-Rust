@@ -87,8 +87,10 @@ impl Extractor {
     /// Resolves (or returns cached) the direct audio stream URL for a track.
     pub async fn resolve_stream(&self, track: &Track) -> Result<ResolvedInfo> {
         if let Some(cached) = self.cache.get(&track.webpage_url).await {
+            tracing::info!(url = %track.webpage_url, "resolve_stream: cache hit");
             return Ok(cached);
         }
+        tracing::info!(url = %track.webpage_url, "resolve_stream: cache miss, extracting");
         let args = ytdlp::extract_args(&self.config, &track.webpage_url, false);
         let entries = self.run(&args).await?;
         let item = entries
@@ -107,11 +109,16 @@ impl Extractor {
     }
 
     async fn run(&self, args: &[String]) -> Result<Vec<Value>> {
+        let queue_start = std::time::Instant::now();
         let _permit = self
             .semaphore
             .acquire()
             .await
             .expect("semaphore is never closed");
+        let wait = queue_start.elapsed();
+        if wait.as_millis() > 50 {
+            tracing::info!(waited = ?wait, "extraction: waited for a free yt-dlp slot (YTDLP_CONCURRENT_EXTRACTS may be too low)");
+        }
         ytdlp::run_ytdlp(&self.config, args).await
     }
 }
