@@ -465,7 +465,32 @@ impl PlayerActor {
         self.current_generation += 1;
         let generation = self.current_generation;
 
-        let input: Input = HttpRequest::new(self.http_client.clone(), resolved.stream_url).into();
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in &resolved.headers {
+            let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {
+                tracing::warn!(guild_id = %self.guild_id, header = %name, "play_track: skipping header with invalid name from yt-dlp");
+                continue;
+            };
+            let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) else {
+                tracing::warn!(guild_id = %self.guild_id, header = %name, "play_track: skipping header with invalid value from yt-dlp");
+                continue;
+            };
+            headers.insert(header_name, header_value);
+        }
+        tracing::info!(
+            guild_id = %self.guild_id,
+            header_count = headers.len(),
+            content_length = ?resolved.content_length,
+            "play_track: built HttpRequest with headers/content_length from yt-dlp",
+        );
+
+        let input: Input = HttpRequest {
+            client: self.http_client.clone(),
+            request: resolved.stream_url,
+            headers,
+            content_length: resolved.content_length,
+        }
+        .into();
         tracing::info!(guild_id = %self.guild_id, generation, "play_track: handing input to songbird");
         let handle = {
             let mut call_guard = call.lock().await;

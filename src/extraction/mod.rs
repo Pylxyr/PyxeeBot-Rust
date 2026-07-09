@@ -176,5 +176,75 @@ fn resolved_info_from_json(item: &Value) -> Result<ResolvedInfo> {
         stream_url,
         acodec: value_str(item, "acodec").unwrap_or("").to_owned(),
         abr: item.get("abr").and_then(Value::as_f64).unwrap_or(0.0),
+        headers: headers_from_json(item),
+        content_length: item
+            .get("filesize")
+            .and_then(Value::as_u64)
+            .or_else(|| item.get("filesize_approx").and_then(Value::as_u64)),
     })
+}
+
+/// Pulls yt-dlp's `http_headers` object (from `--dump-json`) into a plain
+/// list of pairs. Some CDNs (YouTube included) reject the stream without
+/// these — e.g. a matching `User-Agent` — so they need to ride along with
+/// the resolved URL into songbird's `HttpRequest`.
+fn headers_from_json(item: &Value) -> Vec<(String, String)> {
+    item.get("http_headers")
+        .and_then(Value::as_object)
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value.as_str().map(|value| (name.clone(), value.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolved_info_picks_up_headers_and_filesize() {
+        let item = serde_json::json!({
+            "url": "https://example.com/stream",
+            "acodec": "opus",
+            "abr": 128.0,
+            "filesize": 1234,
+            "http_headers": {
+                "User-Agent": "yt-dlp",
+                "Referer": "https://youtube.com/",
+            },
+        });
+
+        let resolved = resolved_info_from_json(&item).expect("valid item resolves");
+
+        assert_eq!(resolved.content_length, Some(1234));
+        assert_eq!(resolved.headers.len(), 2);
+        assert!(resolved
+            .headers
+            .iter()
+            .any(|(k, v)| k == "User-Agent" && v == "yt-dlp"));
+    }
+
+    #[test]
+    fn resolved_info_falls_back_to_filesize_approx() {
+        let item = serde_json::json!({
+            "url": "https://example.com/stream",
+            "filesize_approx": 5678,
+        });
+
+        let resolved = resolved_info_from_json(&item).expect("valid item resolves");
+
+        assert_eq!(resolved.content_length, Some(5678));
+        assert!(resolved.headers.is_empty());
+    }
+
+    #[test]
+    fn resolved_info_missing_url_is_an_error() {
+        let item = serde_json::json!({ "acodec": "opus" });
+        assert!(resolved_info_from_json(&item).is_err());
+    }
 }

@@ -9,6 +9,15 @@ pub struct ResolvedInfo {
     pub stream_url: String,
     pub acodec: String,
     pub abr: f64,
+    /// Extra HTTP headers yt-dlp reports are needed to fetch `stream_url`
+    /// (from `--dump-json`'s `http_headers` object).
+    pub headers: Vec<(String, String)>,
+    /// Upper bound on the resource's byte length, from yt-dlp's `filesize`
+    /// or `filesize_approx`. Some CDNs — notably YouTube's — expect a
+    /// bounded `range: bytes=0-N` request instead of an open-ended
+    /// `range: bytes=0-`, and songbird's `HttpRequest` needs this value to
+    /// build that bound.
+    pub content_length: Option<u64>,
 }
 
 /// Caches resolved stream URLs keyed by webpage URL. TTL eviction is handled
