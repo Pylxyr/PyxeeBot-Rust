@@ -53,6 +53,12 @@ tracing            = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 tracing-appender   = "0.2.3"
 
+# Songbird alone requests zero codecs/containers from Symphonia — an explicit
+# dependency here is required to get the WebM (mkv) demuxer used by YouTube's
+# opus audio streams, plus isomp4/aac for the m4a fallback in YTDLP_FORMAT.
+# mkv/ogg/vorbis/wav/flac/pcm/adpcm come from Symphonia's own default features.
+symphonia = { version = "0.5.5", features = ["isomp4", "aac"] }
+
 # Concurrency / caching
 dashmap = "6.2.1"
 moka    = { version = "0.12.15", features = ["future", "sync"] }
