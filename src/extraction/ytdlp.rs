@@ -38,9 +38,15 @@ pub fn extract_args(config: &Config, query_or_url: &str, flat_playlist: bool) ->
 }
 
 /// Builds the yt-dlp argument list for a `ytsearchN:` style text search.
+/// Uses `--flat-playlist` — search only needs enough metadata to rank
+/// candidates (title/uploader/description/view_count/upload_date/etc, all
+/// of which YouTube's search results carry inline), not a full per-video
+/// extraction. Only the single track that actually gets played pays for a
+/// full extraction, in `Extractor::resolve_stream`. This mirrors the Python
+/// bot's `extract_flat=True` search behaviour, which already does this.
 pub fn search_args(config: &Config, query: &str, count: usize) -> Vec<String> {
     let search_target = format!("ytsearch{count}:{query}");
-    extract_args(config, &search_target, false)
+    extract_args(config, &search_target, true)
 }
 
 /// Runs yt-dlp with the given arguments and parses each stdout line as a JSON

@@ -61,3 +61,14 @@ fn search_args_builds_ytsearch_target() {
     let args = search_args(&config, "some query", 5);
     assert_eq!(args.last().unwrap(), "ytsearch5:some query");
 }
+
+#[test]
+fn search_args_uses_flat_playlist() {
+    // Search only needs listing metadata to rank candidates — the full
+    // per-video extraction (format resolution, headers, JS-challenge
+    // solving) is deferred to resolve_stream() for whichever single track
+    // actually gets played. See extraction::ytdlp::search_args' doc comment.
+    let config = test_config();
+    let args = search_args(&config, "some query", 5);
+    assert!(args.contains(&"--flat-playlist".to_owned()));
+}

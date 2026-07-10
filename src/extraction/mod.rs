@@ -119,12 +119,21 @@ impl Extractor {
     }
 
     /// Best-effort: stash resolve info for an entry that's already been
-    /// fully extracted (e.g. as part of a search), so a later
-    /// `resolve_stream` call for the same `webpage_url` is a cache hit
-    /// instead of spawning yt-dlp again. Silently does nothing if the entry
-    /// is missing a playable `url` (shouldn't happen for non-flat search
-    /// results, but resolve_stream's own extraction remains the fallback).
+    /// fully extracted (e.g. as part of a non-flat search or extract_url
+    /// call), so a later `resolve_stream` call for the same `webpage_url`
+    /// is a cache hit instead of spawning yt-dlp again.
+    ///
+    /// Flat search entries (the normal case since `search_args` now uses
+    /// `--flat-playlist`) also carry a `url` key, but it's just a pointer
+    /// to the webpage — not a resolved stream — since flat mode skips
+    /// format resolution entirely. Treating that as a playable stream_url
+    /// would poison the cache with a non-audio URL. `http_headers` is only
+    /// ever present after a real format resolution, so its presence is used
+    /// here as the signal that this entry is safe to prime from.
     async fn prime_cache(&self, webpage_url: &str, item: &Value) {
+        if item.get("http_headers").is_none() {
+            return;
+        }
         if let Ok(info) = resolved_info_from_json(item) {
             self.cache.insert(webpage_url.to_owned(), info).await;
         }

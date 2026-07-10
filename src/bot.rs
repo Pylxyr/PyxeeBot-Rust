@@ -63,7 +63,32 @@ impl BotData {
 pub type Context<'a> = poise::Context<'a, Arc<BotData>, anyhow::Error>;
 
 pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
-    let filter = EnvFilter::try_new(&config.log_level).or_else(|_| EnvFilter::try_new("info"))?;
+    use tracing_subscriber::prelude::*;
+
+    // The configured LOG_LEVEL sets the baseline for everything else (so
+    // noisy dependencies like h2/rustls/tungstenite stay quiet at "info"),
+    // but pyxeebot's own code plus songbird/symphonia — the crates that
+    // actually matter when chasing a playback bug — are always forced to
+    // at least debug. This is a floor, not a ceiling: setting LOG_LEVEL to
+    // something louder (e.g. "trace") still raises these further.
+    let base = if config.log_level.trim().is_empty() {
+        "info"
+    } else {
+        config.log_level.as_str()
+    };
+    let directive_str =
+        format!("{base},pyxeebot=debug,songbird=debug,symphonia_core=debug,symphonia=debug");
+    let fallback = "info,pyxeebot=debug,songbird=debug,symphonia_core=debug,symphonia=debug";
+    let filter =
+        EnvFilter::try_new(&directive_str).or_else(|_| EnvFilter::try_new(fallback))?;
+
+    // Always emit to stdout — under systemd (Type=simple) this is captured
+    // by journalctl automatically (`journalctl -u pyxeebotr -f`), so verbose
+    // diagnostics are never gated behind remembering to tail a file. If
+    // LOG_TO_FILE is also set, the file becomes a second destination rather
+    // than the only one.
+    let stdout_layer = fmt::layer().with_ansi(false);
+    let registry = tracing_subscriber::registry().with(filter).with(stdout_layer);
 
     if config.log_to_file {
         let appender = tracing_appender::rolling::never(&config.log_dir, "musicbot.log");
@@ -71,13 +96,10 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
         // The guard must outlive the program to keep flushing to disk; there is
         // no natural owner for it, so it is intentionally leaked once at startup.
         Box::leak(Box::new(guard));
-        fmt()
-            .with_env_filter(filter)
-            .with_writer(writer)
-            .with_ansi(false)
-            .init();
+        let file_layer = fmt::layer().with_writer(writer).with_ansi(false);
+        registry.with(file_layer).init();
     } else {
-        fmt().with_env_filter(filter).init();
+        registry.init();
     }
     Ok(())
 }
