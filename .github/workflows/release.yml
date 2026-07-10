@@ -14,8 +14,20 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libopus-dev cmake
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - run: cargo test --all-features
+
   build:
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -35,3 +47,68 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: target/release/pyxeebot
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pyxeebot-linux-x86_64
+          path: dist
+
+      # Renamed before upload (not after) so the live ~/pyxeebotr/pyxeebot
+      # binary is never opened for write while systemd still has it running
+      # — avoids ETXTBSY. The remote script below does the atomic mv.
+      - name: Prepare artifact for atomic swap
+        run: mv dist/pyxeebot dist/pyxeebot.new
+
+      - name: Upload binary to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          source: "dist/pyxeebot.new"
+          target: "/home/ubuntu/pyxeebotr"
+          strip_components: 1
+          overwrite: true
+
+      - name: Swap binary and restart service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd ~/pyxeebotr
+            chmod +x pyxeebot.new
+            mv pyxeebot pyxeebot.prev 2>/dev/null || true
+            mv pyxeebot.new pyxeebot
+
+            sudo systemctl restart pyxeebotr
+
+            for i in 1 2 3 4 5; do
+              sleep 3
+              systemctl is-active --quiet pyxeebotr && break
+              if [ $i -eq 5 ]; then
+                echo "pyxeebotr failed to come up — rolling back to previous binary"
+                journalctl -u pyxeebotr -n 30 --no-pager
+                if [ -f pyxeebot.prev ]; then
+                  mv pyxeebot.prev pyxeebot
+                  sudo systemctl restart pyxeebotr
+                fi
+                exit 1
+              fi
+            done
+
+            rm -f pyxeebot.prev
+            echo "Deployed: ${{ github.sha }}"
