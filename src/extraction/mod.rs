@@ -32,7 +32,11 @@ impl Extractor {
     }
 
     /// Runs a `ytsearchN:` query, scores results, and returns tracks best
-    /// match first.
+    /// match first. Since the search step already does a full per-video
+    /// extraction for every candidate (url/headers/filesize included), each
+    /// entry's resolve info is stashed in the cache here too — so whichever
+    /// track ends up getting played skips a redundant second extraction in
+    /// `resolve_stream`.
     pub async fn search(
         &self,
         query: &str,
@@ -43,10 +47,13 @@ impl Extractor {
         let args = ytdlp::search_args(&self.config, query, count);
         let entries = self.run(&args).await?;
         let ranked = scoring::rank_entries(query, entries, curation_mode);
-        Ok(ranked
-            .iter()
-            .map(|(item, _)| track_from_json(item, requester_id, query))
-            .collect())
+        let mut tracks = Vec::with_capacity(ranked.len());
+        for (item, _) in &ranked {
+            let track = track_from_json(item, requester_id, query);
+            self.prime_cache(&track.webpage_url, item).await;
+            tracks.push(track);
+        }
+        Ok(tracks)
     }
 
     /// Same as `search`, but also returns each track's score breakdown —
@@ -62,10 +69,13 @@ impl Extractor {
         let args = ytdlp::search_args(&self.config, query, count);
         let entries = self.run(&args).await?;
         let ranked = scoring::rank_entries(query, entries, curation_mode);
-        Ok(ranked
-            .iter()
-            .map(|(item, bd)| (track_from_json(item, requester_id, query), bd.clone()))
-            .collect())
+        let mut out = Vec::with_capacity(ranked.len());
+        for (item, bd) in &ranked {
+            let track = track_from_json(item, requester_id, query);
+            self.prime_cache(&track.webpage_url, item).await;
+            out.push((track, bd.clone()));
+        }
+        Ok(out)
     }
 
     /// Extracts metadata for a direct URL (no search/ranking involved).
@@ -106,6 +116,18 @@ impl Extractor {
 
     pub async fn invalidate_stream(&self, webpage_url: &str) {
         self.cache.invalidate(webpage_url).await;
+    }
+
+    /// Best-effort: stash resolve info for an entry that's already been
+    /// fully extracted (e.g. as part of a search), so a later
+    /// `resolve_stream` call for the same `webpage_url` is a cache hit
+    /// instead of spawning yt-dlp again. Silently does nothing if the entry
+    /// is missing a playable `url` (shouldn't happen for non-flat search
+    /// results, but resolve_stream's own extraction remains the fallback).
+    async fn prime_cache(&self, webpage_url: &str, item: &Value) {
+        if let Ok(info) = resolved_info_from_json(item) {
+            self.cache.insert(webpage_url.to_owned(), info).await;
+        }
     }
 
     async fn run(&self, args: &[String]) -> Result<Vec<Value>> {
