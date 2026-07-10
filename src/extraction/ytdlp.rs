@@ -29,6 +29,8 @@ pub fn extract_args(config: &Config, query_or_url: &str, flat_playlist: bool) ->
         args.push("--cookies".to_owned());
         args.push(cookies.display().to_string());
     }
+    args.push("--cache-dir".to_owned());
+    args.push(config.ytdlp_cache_dir.display().to_string());
     if let Some(js_runtime) = &config.ytdlp_js_runtime_path {
         args.push("--extractor-args".to_owned());
         args.push(format!("youtube:jsi={js_runtime}"));

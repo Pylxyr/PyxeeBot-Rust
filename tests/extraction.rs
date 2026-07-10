@@ -18,6 +18,7 @@ fn test_config() -> Config {
         idle_timeout_secs: 180,
         empty_channel_timeout_secs: 60,
         ytdlp_cookies_file: None,
+        ytdlp_cache_dir: PathBuf::from("ytdlp-cache"),
         ytdlp_js_runtime_path: None,
         ytdlp_socket_timeout: 15,
         ytdlp_prefetch_count: 1,
@@ -53,6 +54,16 @@ fn extract_args_flat_playlist_adds_flag() {
     let config = test_config();
     let args = extract_args(&config, "https://example.com/playlist", true);
     assert!(args.contains(&"--flat-playlist".to_owned()));
+}
+
+#[test]
+fn extract_args_always_sets_cache_dir() {
+    // yt-dlp's default cache dir is blocked by ProtectHome=read-only;
+    // --cache-dir must always point at config.ytdlp_cache_dir instead.
+    let config = test_config();
+    let args = extract_args(&config, "https://example.com/video", false);
+    let idx = args.iter().position(|a| a == "--cache-dir").unwrap();
+    assert_eq!(args[idx + 1], config.ytdlp_cache_dir.display().to_string());
 }
 
 #[test]

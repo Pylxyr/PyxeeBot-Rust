@@ -16,6 +16,7 @@ pub struct Config {
     pub idle_timeout_secs: u64,
     pub empty_channel_timeout_secs: u64,
     pub ytdlp_cookies_file: Option<PathBuf>,
+    pub ytdlp_cache_dir: PathBuf,
     pub ytdlp_js_runtime_path: Option<String>,
     pub ytdlp_socket_timeout: u32,
     pub ytdlp_prefetch_count: usize,
@@ -40,6 +41,11 @@ impl Config {
         let base_dir = std::env::current_dir()?;
         let data_dir = base_dir.join("data");
         std::fs::create_dir_all(&data_dir)?;
+
+        // yt-dlp's default ~/.cache/yt-dlp is blocked by ProtectHome=read-only,
+        // silently disabling its signature-cache. Point it here instead.
+        let ytdlp_cache_dir = data_dir.join("ytdlp-cache");
+        std::fs::create_dir_all(&ytdlp_cache_dir)?;
 
         let token = env_str("DISCORD_TOKEN");
         if token.is_empty() {
@@ -109,6 +115,7 @@ impl Config {
             idle_timeout_secs: int_env("IDLE_TIMEOUT_SECONDS", 180).max(30) as u64,
             empty_channel_timeout_secs: int_env("EMPTY_CHANNEL_TIMEOUT_SECONDS", 60).max(15) as u64,
             ytdlp_cookies_file,
+            ytdlp_cache_dir,
             ytdlp_js_runtime_path,
             ytdlp_socket_timeout: int_env("YTDLP_SOCKET_TIMEOUT", 15).max(5) as u32,
             ytdlp_prefetch_count: int_env("YTDLP_PREFETCH_COUNT", 1).max(0) as usize,
