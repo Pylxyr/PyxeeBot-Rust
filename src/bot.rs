@@ -79,8 +79,7 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
     let directive_str =
         format!("{base},pyxeebot=debug,songbird=debug,symphonia_core=debug,symphonia=debug");
     let fallback = "info,pyxeebot=debug,songbird=debug,symphonia_core=debug,symphonia=debug";
-    let filter =
-        EnvFilter::try_new(&directive_str).or_else(|_| EnvFilter::try_new(fallback))?;
+    let filter = EnvFilter::try_new(&directive_str).or_else(|_| EnvFilter::try_new(fallback))?;
 
     // Always emit to stdout — under systemd (Type=simple) this is captured
     // by journalctl automatically (`journalctl -u pyxeebotr -f`), so verbose
@@ -88,7 +87,9 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
     // LOG_TO_FILE is also set, the file becomes a second destination rather
     // than the only one.
     let stdout_layer = fmt::layer().with_ansi(false);
-    let registry = tracing_subscriber::registry().with(filter).with(stdout_layer);
+    let registry = tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout_layer);
 
     if config.log_to_file {
         let appender = tracing_appender::rolling::never(&config.log_dir, "musicbot.log");
