@@ -427,6 +427,7 @@ impl PlayerActor {
                     match self.play_track(track).await {
                         Ok(()) => {
                             tracing::info!(guild_id = %self.guild_id, title = %title, "advance_and_play: playing");
+                            self.spawn_prefetch();
                             return Ok(true);
                         }
                         Err(e) => {
@@ -544,6 +545,26 @@ impl PlayerActor {
         }
         tracing::info!(guild_id = %self.guild_id, "try_autoplay: nothing playable found");
         Ok(())
+    }
+
+    /// Resolves the next `ytdlp_prefetch_count` queued tracks in the
+    /// background as soon as the current one starts, so by the time the
+    /// queue advances to them, `resolve_stream` is a cache hit instead of
+    /// a fresh ~10s yt-dlp extraction. Fire-and-forget: failures here just
+    /// mean the eventual real resolve pays the normal cost.
+    fn spawn_prefetch(&self) {
+        let count = self.config.ytdlp_prefetch_count;
+        for track in self.state.queue.iter().take(count).cloned() {
+            let extractor = self.extractor.clone();
+            let guild_id = self.guild_id;
+            tokio::spawn(async move {
+                let title = track.title.clone();
+                match extractor.resolve_stream(&track).await {
+                    Ok(_) => tracing::info!(%guild_id, %title, "spawn_prefetch: resolved"),
+                    Err(e) => tracing::warn!(%guild_id, %title, error = %e, "spawn_prefetch: failed"),
+                }
+            });
+        }
     }
 
     fn arm_idle_timer(&mut self) {
