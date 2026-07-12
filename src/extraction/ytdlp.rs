@@ -35,6 +35,10 @@ pub fn extract_args(config: &Config, query_or_url: &str, flat_playlist: bool) ->
         args.push("--extractor-args".to_owned());
         args.push(format!("youtube:jsi={js_runtime}"));
     }
+    if let Some(base_url) = &config.ytdlp_pot_provider_base_url {
+        args.push("--extractor-args".to_owned());
+        args.push(format!("youtubepot-bgutilhttp:base_url={base_url}"));
+    }
     args.push(query_or_url.to_owned());
     args
 }

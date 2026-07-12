@@ -18,6 +18,7 @@ pub struct Config {
     pub ytdlp_cookies_file: Option<PathBuf>,
     pub ytdlp_cache_dir: PathBuf,
     pub ytdlp_js_runtime_path: Option<String>,
+    pub ytdlp_pot_provider_base_url: Option<String>,
     pub ytdlp_socket_timeout: u32,
     pub ytdlp_prefetch_count: usize,
     pub ytdlp_concurrent_extracts: usize,
@@ -83,6 +84,15 @@ impl Config {
             }
         };
 
+        let ytdlp_pot_provider_base_url = {
+            let s = env_str("YTDLP_POT_PROVIDER_BASE_URL");
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        };
+
         let lastfm_api_key = {
             let s = env_str("LASTFM_API_KEY");
             if s.is_empty() {
@@ -117,6 +127,7 @@ impl Config {
             ytdlp_cookies_file,
             ytdlp_cache_dir,
             ytdlp_js_runtime_path,
+            ytdlp_pot_provider_base_url,
             ytdlp_socket_timeout: int_env("YTDLP_SOCKET_TIMEOUT", 15).max(5) as u32,
             ytdlp_prefetch_count: int_env("YTDLP_PREFETCH_COUNT", 1).max(0) as usize,
             ytdlp_concurrent_extracts: int_env("YTDLP_CONCURRENT_EXTRACTS", 1).max(1) as usize,

@@ -20,6 +20,7 @@ fn test_config() -> Config {
         ytdlp_cookies_file: None,
         ytdlp_cache_dir: PathBuf::from("ytdlp-cache"),
         ytdlp_js_runtime_path: None,
+        ytdlp_pot_provider_base_url: None,
         ytdlp_socket_timeout: 15,
         ytdlp_prefetch_count: 1,
         ytdlp_concurrent_extracts: 1,
@@ -64,6 +65,21 @@ fn extract_args_always_sets_cache_dir() {
     let args = extract_args(&config, "https://example.com/video", false);
     let idx = args.iter().position(|a| a == "--cache-dir").unwrap();
     assert_eq!(args[idx + 1], config.ytdlp_cache_dir.display().to_string());
+}
+
+#[test]
+fn extract_args_omits_pot_provider_by_default() {
+    let config = test_config();
+    let args = extract_args(&config, "https://example.com/video", false);
+    assert!(!args.iter().any(|a| a.starts_with("youtubepot-bgutilhttp:")));
+}
+
+#[test]
+fn extract_args_adds_pot_provider_when_configured() {
+    let mut config = test_config();
+    config.ytdlp_pot_provider_base_url = Some("http://127.0.0.1:4416".to_owned());
+    let args = extract_args(&config, "https://example.com/video", false);
+    assert!(args.contains(&"youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416".to_owned()));
 }
 
 #[test]
