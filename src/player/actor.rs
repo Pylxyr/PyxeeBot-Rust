@@ -115,6 +115,9 @@ pub struct PlayerActor {
     is_paused: bool,
     idle_timer: Option<JoinHandle<()>>,
     empty_timer: Option<JoinHandle<()>>,
+    track_started_at: Option<std::time::Instant>,
+    paused_since: Option<std::time::Instant>,
+    paused_total: std::time::Duration,
 }
 
 impl PlayerActor {
@@ -153,6 +156,9 @@ impl PlayerActor {
             is_paused: false,
             idle_timer: None,
             empty_timer: None,
+            track_started_at: None,
+            paused_since: None,
+            paused_total: std::time::Duration::ZERO,
         };
         tokio::spawn(actor.run());
         (tx, snapshot_rx)
@@ -169,11 +175,27 @@ impl PlayerActor {
         }
     }
 
+    fn elapsed_secs(&self) -> i64 {
+        let Some(started) = self.track_started_at else {
+            return 0;
+        };
+        let now = std::time::Instant::now();
+        let paused_extra = self
+            .paused_since
+            .map(|since| now.duration_since(since))
+            .unwrap_or_default();
+        now.duration_since(started)
+            .saturating_sub(self.paused_total + paused_extra)
+            .as_secs() as i64
+    }
+
     fn publish_snapshot(&self) {
         let is_connected = self.call.is_some();
-        let _ = self
-            .snapshot_tx
-            .send(self.state.to_snapshot(is_connected, self.is_paused));
+        let _ = self.snapshot_tx.send(self.state.to_snapshot(
+            is_connected,
+            self.is_paused,
+            self.elapsed_secs(),
+        ));
     }
 
     async fn handle(&mut self, cmd: PlayerCommand) {
@@ -201,18 +223,24 @@ impl PlayerActor {
                     let _ = handle.stop();
                 }
                 self.is_paused = false;
+                self.track_started_at = None;
+                self.paused_since = None;
                 self.arm_idle_timer();
             }
             PlayerCommand::Pause => {
                 if let Some(handle) = &self.current_handle {
                     let _ = handle.pause();
                     self.is_paused = true;
+                    self.paused_since = Some(std::time::Instant::now());
                 }
             }
             PlayerCommand::Resume => {
                 if let Some(handle) = &self.current_handle {
                     let _ = handle.play();
                     self.is_paused = false;
+                    if let Some(since) = self.paused_since.take() {
+                        self.paused_total += since.elapsed();
+                    }
                 }
             }
             PlayerCommand::Leave { reply } => {
@@ -223,6 +251,8 @@ impl PlayerActor {
                 self.state.clear();
                 self.state.current = None;
                 self.is_paused = false;
+                self.track_started_at = None;
+                self.paused_since = None;
                 let result = lifecycle::disconnect(&self.songbird, self.guild_id).await;
                 self.call = None;
                 self.channel_id = None;
@@ -380,8 +410,16 @@ impl PlayerActor {
         if self.call.is_none() || self.channel_id != Some(channel_id) {
             tracing::info!(guild_id = %self.guild_id, channel_id = %channel_id, "handle_play: connecting to voice channel");
             let connect_start = std::time::Instant::now();
-            let call = lifecycle::connect(&self.songbird, self.guild_id, channel_id).await?;
-            tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect finished");
+            // Speculative: connect doesn't need the resolved stream, and
+            // resolve_stream caches on success, so play_track's later call
+            // for this same track becomes a cache hit instead of a second
+            // extraction. Errors here are ignored — play_track's real call
+            // still runs and surfaces any genuine failure.
+            let connect_fut = lifecycle::connect(&self.songbird, self.guild_id, channel_id);
+            let prefetch_fut = self.extractor.resolve_stream(&track);
+            let (call, _) = tokio::join!(connect_fut, prefetch_fut);
+            let call = call?;
+            tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect + speculative resolve finished");
             self.call = Some(call);
             self.channel_id = Some(channel_id);
         }
@@ -505,6 +543,9 @@ impl PlayerActor {
 
         self.current_handle = Some(handle);
         self.is_paused = false;
+        self.track_started_at = Some(std::time::Instant::now());
+        self.paused_since = None;
+        self.paused_total = std::time::Duration::ZERO;
         tracing::info!(guild_id = %self.guild_id, title = %track.title, "play_track: playback started");
         Ok(())
     }
@@ -561,7 +602,9 @@ impl PlayerActor {
                 let title = track.title.clone();
                 match extractor.resolve_stream(&track).await {
                     Ok(_) => tracing::info!(%guild_id, %title, "spawn_prefetch: resolved"),
-                    Err(e) => tracing::warn!(%guild_id, %title, error = %e, "spawn_prefetch: failed"),
+                    Err(e) => {
+                        tracing::warn!(%guild_id, %title, error = %e, "spawn_prefetch: failed")
+                    }
                 }
             });
         }
