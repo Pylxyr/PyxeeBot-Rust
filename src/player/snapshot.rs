@@ -10,4 +10,5 @@ pub struct PlayerSnapshot {
     pub is_paused: bool,
     pub is_connected: bool,
     pub total_duration_secs: i64,
+    pub elapsed_secs: i64,
 }
