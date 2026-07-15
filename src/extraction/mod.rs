@@ -279,6 +279,3 @@ mod tests {
         assert!(resolved_info_from_json(&item).is_err());
     }
 }
-son(&item).is_err());
-    }
-}
