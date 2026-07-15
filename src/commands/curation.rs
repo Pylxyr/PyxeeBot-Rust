@@ -32,8 +32,87 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     let similar = match lastfm.similar_artists(&artist, 6).await {
         Ok(a) if !a.is_empty() => a,
         Ok(_) => {
-            handle
+            let _ = handle
                 .edit(
+                    ctx,
+                    poise::CreateReply::default()
+                        .content(format!("No similar artists found for `{artist}`.")),
+                )
+                .await;
+            return Ok(());
+        }
+        Err(e) => {
+            let _ = handle
+                .edit(
+                    ctx,
+                    poise::CreateReply::default().content(format!("Last.fm lookup failed: {e}")),
+                )
+                .await;
+            return Ok(());
+        }
+    };
+
+    let player = data.player_for(guild_id).await;
+    let mut queued = Vec::new();
+    for similar_artist in &similar {
+        match data.extractor.search(similar_artist, author_id, true).await {
+            Ok(tracks) if !tracks.is_empty() => {
+                let track = tracks.into_iter().next().unwrap();
+                let title = track.escaped_title();
+                if player
+                    .play(track, false, channel_id)
+                    .await
+                    .is_ok_and(|o| !o.failed)
+                {
+                    queued.push(title);
+                }
+            }
+            _ => continue,
+        }
+    }
+
+    if queued.is_empty() {
+        let _ = handle
+            .edit(
+                ctx,
+                poise::CreateReply::default()
+                    .content("Couldn't find playable tracks for this vibe."),
+            )
+            .await;
+    } else {
+        let list = queued
+            .iter()
+            .map(|t| format!("• {t}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = handle
+            .edit(
+                ctx,
+                poise::CreateReply::default()
+                    .content(format!("Queued {} track(s):\n{list}", queued.len())),
+            )
+            .await;
+    }
+    Ok(())
+}
+
+/// Toggle autoplay (queues a similar track instead of going idle).
+#[poise::command(prefix_command, slash_command, guild_only)]
+pub async fn autoplay(ctx: Context<'_>) -> anyhow::Result<()> {
+    let Some(guild_id) = ctx.guild_id() else {
+        return Ok(());
+    };
+    let data = ctx.data();
+    let current = data.db.get_autoplay(guild_id.get()).await;
+    let new_value = !current;
+    data.db
+        .set_autoplay(guild_id.get(), new_value, &data.config.default_prefix)
+        .await?;
+    data.player_for(guild_id).await.set_autoplay(new_value);
+    let state = if new_value { "enabled" } else { "disabled" };
+    ctx.say(format!("Autoplay {state}.")).await?;
+    Ok(())
+}
                     ctx,
                     poise::CreateReply::default()
                         .content(format!("No similar artists found for `{artist}`.")),
