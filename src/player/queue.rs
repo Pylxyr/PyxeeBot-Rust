@@ -161,7 +161,12 @@ impl PlayerState {
         !self.stay_connected && self.current.is_none() && self.queue.is_empty()
     }
 
-    pub fn to_snapshot(&self, is_connected: bool, is_paused: bool) -> PlayerSnapshot {
+    pub fn to_snapshot(
+        &self,
+        is_connected: bool,
+        is_paused: bool,
+        elapsed_secs: i64,
+    ) -> PlayerSnapshot {
         PlayerSnapshot {
             current: self.current.clone(),
             queue: self.queue.iter().cloned().collect(),
@@ -171,6 +176,7 @@ impl PlayerState {
             is_paused,
             is_connected,
             total_duration_secs: self.total_duration,
+            elapsed_secs,
         }
     }
 }
