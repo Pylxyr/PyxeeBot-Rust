@@ -31,12 +31,12 @@ impl Extractor {
         }
     }
 
-    /// Runs a `ytsearchN:` query, scores results, and returns tracks best
-    /// match first. Since the search step already does a full per-video
-    /// extraction for every candidate (url/headers/filesize included), each
-    /// entry's resolve info is stashed in the cache here too — so whichever
-    /// track ends up getting played skips a redundant second extraction in
-    /// `resolve_stream`.
+    /// Runs a `ytsearchN:` query (flat-playlist — listing metadata only, no
+    /// per-video extraction), scores results, and returns tracks best match
+    /// first. prime_cache is a no-op for these entries (no http_headers),
+    /// but stays in place for cases where a fully-extracted entry does flow
+    /// through here (e.g. a direct URL), so resolve_stream can still hit a
+    /// warm cache for those.
     pub async fn search(
         &self,
         query: &str,
@@ -277,5 +277,8 @@ mod tests {
     fn resolved_info_missing_url_is_an_error() {
         let item = serde_json::json!({ "acodec": "opus" });
         assert!(resolved_info_from_json(&item).is_err());
+    }
+}
+son(&item).is_err());
     }
 }
