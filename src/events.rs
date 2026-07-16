@@ -67,6 +67,9 @@ async fn handle_component_interaction(
                 .await;
         }
         components::SEARCH_PICK => handle_search_pick(ctx, data, interaction, guild_id).await,
+        id if id.starts_with(components::SEARCH_PAGE_PREFIX) => {
+            handle_search_page(ctx, data, interaction, guild_id, id).await
+        }
         _ => {}
     }
 }
@@ -136,6 +139,36 @@ async fn handle_search_pick(
                 .content(content)
                 .components(Vec::new()),
         )
+        .await;
+}
+
+async fn handle_search_page(
+    ctx: &serenity::Context,
+    data: &Arc<BotData>,
+    interaction: &ComponentInteraction,
+    guild_id: serenity::GuildId,
+    custom_id: &str,
+) {
+    let Some(page) = custom_id
+        .strip_prefix(components::SEARCH_PAGE_PREFIX)
+        .and_then(|s| s.parse::<usize>().ok())
+    else {
+        return;
+    };
+    let Some(results) = data.search_debug.get(&guild_id) else {
+        let _ = interaction
+            .create_response(
+                ctx,
+                components::update_response("That search has expired.", Vec::new()),
+            )
+            .await;
+        return;
+    };
+
+    let content = components::search_results_content(None, &results, page);
+    let menu = components::search_select_menu(&results, page);
+    let _ = interaction
+        .create_response(ctx, components::update_response(content, menu))
         .await;
 }
 

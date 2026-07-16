@@ -1,8 +1,19 @@
 use crate::bot::Context;
 
-/// Queue a run of tracks by artists similar to the one you name (needs
+/// Sliding window size for per-guild !vibe song history — see vibe_history
+/// on BotData.
+const VIBE_HISTORY_CAP: usize = 50;
+
+/// Normalizes a query string into a dedup key so "Zutomayo Saturn" and
+/// "zutomayo  saturn" count as the same song.
+fn vibe_history_key(query: &str) -> String {
+    query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// Queue a run of tracks similar to what you name — an artist, or an artist
+/// + song (e.g. "zutomayo saturn") for song-level similarity (needs
 /// LASTFM_API_KEY configured).
-#[poise::command(prefix_command, slash_command, guild_only)]
+#[poise::command(prefix_command, slash_command, guild_only, aliases("vb"))]
 pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
@@ -29,33 +40,73 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         .say(format!("Building a vibe around `{artist}`..."))
         .await?;
 
-    let similar = match lastfm.similar_artists(&artist, 6).await {
-        Ok(a) if !a.is_empty() => a,
-        Ok(_) => {
-            let _ = handle
-                .edit(
-                    ctx,
-                    poise::CreateReply::default()
-                        .content(format!("No similar artists found for `{artist}`.")),
-                )
-                .await;
-            return Ok(());
+    // Try resolving the input as "artist + song" first (e.g. "zutomayo
+    // saturn") — that's how this is actually used, the same way you'd type
+    // !play. Falls back to artist-level similarity if no track matches or
+    // the seed track has no similar tracks of its own.
+    let mut queries: Vec<String> = Vec::new();
+    if let Ok(Some((resolved_artist, resolved_track))) = lastfm.resolve_track(&artist).await {
+        if let Ok(similar) = lastfm
+            .similar_tracks(&resolved_artist, &resolved_track, 6)
+            .await
+        {
+            queries = similar
+                .into_iter()
+                .map(|(a, t)| format!("{a} {t}"))
+                .collect();
         }
-        Err(e) => {
-            let _ = handle
-                .edit(
-                    ctx,
-                    poise::CreateReply::default().content(format!("Last.fm lookup failed: {e}")),
-                )
-                .await;
-            return Ok(());
+    }
+
+    if queries.is_empty() {
+        queries = match lastfm.similar_artists(&artist, 6).await {
+            Ok(a) if !a.is_empty() => a,
+            Ok(_) => {
+                let _ = handle
+                    .edit(
+                        ctx,
+                        poise::CreateReply::default().content(format!(
+                            "No similar artists or tracks found for `{artist}`."
+                        )),
+                    )
+                    .await;
+                return Ok(());
+            }
+            Err(e) => {
+                let _ = handle
+                    .edit(
+                        ctx,
+                        poise::CreateReply::default()
+                            .content(format!("Last.fm lookup failed: {e}")),
+                    )
+                    .await;
+                return Ok(());
+            }
+        };
+    }
+
+    // Prefer songs this guild's !vibe hasn't queued recently (last
+    // VIBE_HISTORY_CAP unique, sliding window). Only falls back to
+    // candidates already in that history if every candidate this time
+    // happens to be a repeat.
+    {
+        let seen = data.vibe_history.get(&guild_id);
+        let fresh: Vec<String> = queries
+            .iter()
+            .filter(|q| {
+                seen.as_ref()
+                    .is_none_or(|h| !h.contains(&vibe_history_key(q)))
+            })
+            .cloned()
+            .collect();
+        if !fresh.is_empty() {
+            queries = fresh;
         }
-    };
+    }
 
     let player = data.player_for(guild_id).await;
     let mut queued = Vec::new();
-    for similar_artist in &similar {
-        match data.extractor.search(similar_artist, author_id, true).await {
+    for query in &queries {
+        match data.extractor.search(query, author_id, true).await {
             Ok(tracks) if !tracks.is_empty() => {
                 let track = tracks.into_iter().next().unwrap();
                 let title = track.escaped_title();
@@ -65,6 +116,13 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
                     .is_ok_and(|o| !o.failed)
                 {
                     queued.push(title);
+                    let mut history = data.vibe_history.entry(guild_id).or_default();
+                    let key = vibe_history_key(query);
+                    history.retain(|k| k != &key);
+                    history.push_back(key);
+                    while history.len() > VIBE_HISTORY_CAP {
+                        history.pop_front();
+                    }
                 }
             }
             _ => continue,

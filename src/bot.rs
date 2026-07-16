@@ -29,6 +29,9 @@ pub struct BotData {
     pub players: DashMap<serenity::GuildId, Arc<GuildPlayer>>,
     /// Last search's ranked results + score breakdowns per guild, for `!why`.
     pub search_debug: Cache<serenity::GuildId, Arc<Vec<(Track, ScoreBreakdown)>>>,
+    /// Recently `!vibe`-queued song keys per guild, oldest-first, capped at
+    /// VIBE_HISTORY_CAP — lets vibe favour songs it hasn't just played.
+    pub vibe_history: DashMap<serenity::GuildId, std::collections::VecDeque<String>>,
 }
 
 impl BotData {
@@ -169,6 +172,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                         .max_capacity(200)
                         .time_to_live(Duration::from_secs(30 * 60))
                         .build(),
+                    vibe_history: DashMap::new(),
                 }))
             })
         })

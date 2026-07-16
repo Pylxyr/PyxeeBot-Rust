@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::bot::Context;
 
 /// Search for a track and show the top results (use !play to queue one).
-#[poise::command(prefix_command, slash_command, guild_only)]
+#[poise::command(prefix_command, slash_command, guild_only, aliases("s"))]
 pub async fn search(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
@@ -11,10 +11,11 @@ pub async fn search(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<(
     let handle = ctx.say(format!("Searching for `{query}`...")).await?;
     let author_id = ctx.author().id.get();
 
+    let fetch_count = crate::components::SEARCH_PAGE_SIZE * crate::components::SEARCH_MAX_PAGES;
     let results = match ctx
         .data()
         .extractor
-        .search_with_debug(&query, author_id, false)
+        .search_with_debug(&query, author_id, false, fetch_count)
         .await
     {
         Ok(r) => r,
@@ -39,34 +40,17 @@ pub async fn search(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<(
         return Ok(());
     }
 
-    let lines: Vec<String> = results
-        .iter()
-        .take(5)
-        .enumerate()
-        .map(|(i, (t, _))| {
-            format!(
-                "`{}.` {} ({}) — {}",
-                i + 1,
-                t.escaped_title(),
-                t.duration_label(),
-                t.escaped_uploader()
-            )
-        })
-        .collect();
-
     ctx.data()
         .search_debug
         .insert(guild_id, Arc::new(results.clone()));
-    let menu = crate::components::search_select_menu(&results);
+    let content = crate::components::search_results_content(Some(&query), &results, 0);
+    let menu = crate::components::search_select_menu(&results, 0);
 
     handle
         .edit(
             ctx,
             poise::CreateReply::default()
-                .content(format!(
-                    "Top results for `{query}`:\n{}\n\nPick one below, use `!play <title>`, or `!why <n>` to see why a result ranked where it did.",
-                    lines.join("\n")
-                ))
+                .content(content)
                 .components(menu),
         )
         .await?;

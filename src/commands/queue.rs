@@ -96,7 +96,7 @@ pub async fn move_track_cmd(ctx: Context<'_>, from: usize, to: usize) -> anyhow:
 }
 
 /// Remove a track from the queue by position (1-indexed).
-#[poise::command(prefix_command, slash_command, guild_only)]
+#[poise::command(prefix_command, slash_command, guild_only, aliases("rm"))]
 pub async fn remove(ctx: Context<'_>, position: usize) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());

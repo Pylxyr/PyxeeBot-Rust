@@ -12,6 +12,9 @@ pub const NP_PAUSE: &str = "np:pause";
 pub const NP_SKIP: &str = "np:skip";
 pub const NP_LOOP: &str = "np:loop";
 pub const SEARCH_PICK: &str = "search:pick";
+pub const SEARCH_PAGE_PREFIX: &str = "search:page:";
+pub const SEARCH_PAGE_SIZE: usize = 5;
+pub const SEARCH_MAX_PAGES: usize = 3;
 
 pub fn now_playing_content(snapshot: &PlayerSnapshot) -> String {
     match &snapshot.current {
@@ -55,17 +58,86 @@ pub fn now_playing_buttons(snapshot: &PlayerSnapshot) -> Vec<CreateActionRow> {
     ])]
 }
 
-pub fn search_select_menu(results: &[(Track, ScoreBreakdown)]) -> Vec<CreateActionRow> {
+/// Builds the message text for one page of search results. Position numbers
+/// (`n.`) are absolute across all pages, matching what `!why <n>` expects.
+/// `query` is the original search text on first render; page-navigation
+/// clicks (which don't have it) pass None and get a page-indicator header
+/// instead.
+pub fn search_results_content(
+    query: Option<&str>,
+    results: &[(Track, ScoreBreakdown)],
+    page: usize,
+) -> String {
+    let start = page * SEARCH_PAGE_SIZE;
+    let lines: Vec<String> = results
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(SEARCH_PAGE_SIZE)
+        .map(|(i, (t, _))| {
+            format!(
+                "`{}.` {} ({}) — {}",
+                i + 1,
+                t.escaped_title(),
+                t.duration_label(),
+                t.escaped_uploader()
+            )
+        })
+        .collect();
+    let total_pages = search_page_count(results.len());
+    let header = match query {
+        Some(q) => format!("Top results for `{q}`:"),
+        None => format!("Search results — page {} of {total_pages}:", page + 1),
+    };
+    format!(
+        "{header}\n{}\n\nPick one below, use `!play <title>`, or `!why <n>` to see why a result ranked where it did.",
+        lines.join("\n")
+    )
+}
+
+/// Number of pages needed for `total` results, capped at SEARCH_MAX_PAGES.
+pub fn search_page_count(total: usize) -> usize {
+    total.div_ceil(SEARCH_PAGE_SIZE).clamp(1, SEARCH_MAX_PAGES)
+}
+
+/// Builds the select menu (current page's results only, values are absolute
+/// indices into the full result set) plus page-jump buttons when there's
+/// more than one page.
+pub fn search_select_menu(
+    results: &[(Track, ScoreBreakdown)],
+    page: usize,
+) -> Vec<CreateActionRow> {
+    let start = page * SEARCH_PAGE_SIZE;
     let options: Vec<CreateSelectMenuOption> = results
         .iter()
-        .take(5)
         .enumerate()
+        .skip(start)
+        .take(SEARCH_PAGE_SIZE)
         .map(|(i, (t, _))| CreateSelectMenuOption::new(t.escaped_title(), i.to_string()))
         .collect();
-    vec![CreateActionRow::SelectMenu(CreateSelectMenu::new(
+    let select_row = CreateActionRow::SelectMenu(CreateSelectMenu::new(
         SEARCH_PICK,
         CreateSelectMenuKind::String { options },
-    ))]
+    ));
+
+    let total_pages = search_page_count(results.len());
+    if total_pages <= 1 {
+        return vec![select_row];
+    }
+
+    let buttons = (0..total_pages)
+        .map(|p| {
+            CreateButton::new(format!("{SEARCH_PAGE_PREFIX}{p}"))
+                .label(format!("Page {}", p + 1))
+                .style(if p == page {
+                    ButtonStyle::Primary
+                } else {
+                    ButtonStyle::Secondary
+                })
+                .disabled(p == page)
+        })
+        .collect();
+    vec![select_row, CreateActionRow::Buttons(buttons)]
 }
 
 /// Builds the response that updates the interacted-with message in place —

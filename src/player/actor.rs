@@ -72,11 +72,20 @@ pub enum PlayerCommand {
     Rejoin {
         channel_id: ChannelId,
     },
-    /// Fired by the songbird EventHandler when a track ends, carrying the
-    /// generation number it was registered under. If that no longer matches
-    /// `current_generation`, this track was already superseded by a manual
-    /// skip/previous/stop — the signal is stale and ignored.
+    /// Fired by the songbird EventHandler when a track ends normally,
+    /// carrying the generation number it was registered under. If that no
+    /// longer matches `current_generation`, this track was already
+    /// superseded by a manual skip/previous/stop — the signal is stale and
+    /// ignored.
     TrackEnded(u64),
+    /// Same generation-check semantics as TrackEnded, but for songbird's
+    /// TrackEvent::Error — a decode/playback failure after play_track
+    /// already returned Ok (e.g. a corrupt stream). Songbird still fires
+    /// End for these too, so the queue was already advancing correctly;
+    /// this exists so the failure is logged distinctly and the track isn't
+    /// requeued for loop mode (a broken track looping forever would retry
+    /// and fail every time).
+    TrackErrored(u64),
     ScheduleEmptyDisconnect,
     CancelEmptyDisconnect,
     IdleTimeout,
@@ -87,12 +96,18 @@ pub enum PlayerCommand {
 struct TrackEndNotifier {
     tx: mpsc::UnboundedSender<PlayerCommand>,
     generation: u64,
+    errored: bool,
 }
 
 #[async_trait::async_trait]
 impl SongbirdEventHandler for TrackEndNotifier {
     async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
-        let _ = self.tx.send(PlayerCommand::TrackEnded(self.generation));
+        let cmd = if self.errored {
+            PlayerCommand::TrackErrored(self.generation)
+        } else {
+            PlayerCommand::TrackEnded(self.generation)
+        };
+        let _ = self.tx.send(cmd);
         None
     }
 }
@@ -328,30 +343,10 @@ impl PlayerActor {
                 }
             }
             PlayerCommand::TrackEnded(generation) => {
-                if generation != self.current_generation {
-                    return;
-                }
-                self.current_handle = None;
-                self.is_paused = false;
-                let finished = self.state.current.clone();
-                if let Some(finished) = finished.clone() {
-                    self.state.requeue_finished(finished);
-                }
-                if let Err(e) = self.advance_and_play().await {
-                    tracing::warn!(guild_id = %self.guild_id, error = %e, "failed to advance queue");
-                }
-                if self.state.current.is_none() {
-                    if self.state.autoplay {
-                        if let Some(seed) = &finished {
-                            if let Err(e) = self.try_autoplay(seed).await {
-                                tracing::warn!(guild_id = %self.guild_id, error = %e, "autoplay failed");
-                            }
-                        }
-                    }
-                    if self.state.current.is_none() && self.state.should_disconnect_when_idle() {
-                        self.arm_idle_timer();
-                    }
-                }
+                self.handle_track_finished(generation, false).await;
+            }
+            PlayerCommand::TrackErrored(generation) => {
+                self.handle_track_finished(generation, true).await;
             }
             PlayerCommand::ScheduleEmptyDisconnect => {
                 if self.empty_timer.is_none() {
@@ -452,6 +447,42 @@ impl PlayerActor {
         })
     }
 
+    /// Shared by TrackEnded and TrackErrored — songbird fires End even when
+    /// a track errored, so the queue-advance logic is identical either way.
+    /// The only difference is diagnostics and the requeue guard: an errored
+    /// track is never requeued for loop mode, since a broken track looping
+    /// forever would just fail on every replay.
+    async fn handle_track_finished(&mut self, generation: u64, errored: bool) {
+        if generation != self.current_generation {
+            return;
+        }
+        self.current_handle = None;
+        self.is_paused = false;
+        let finished = self.state.current.clone();
+        if errored {
+            if let Some(t) = &finished {
+                tracing::warn!(guild_id = %self.guild_id, title = %t.title, "track errored during playback, skipping (not requeued)");
+            }
+        } else if let Some(finished) = finished.clone() {
+            self.state.requeue_finished(finished);
+        }
+        if let Err(e) = self.advance_and_play().await {
+            tracing::warn!(guild_id = %self.guild_id, error = %e, "failed to advance queue");
+        }
+        if self.state.current.is_none() {
+            if self.state.autoplay {
+                if let Some(seed) = &finished {
+                    if let Err(e) = self.try_autoplay(seed).await {
+                        tracing::warn!(guild_id = %self.guild_id, error = %e, "autoplay failed");
+                    }
+                }
+            }
+            if self.state.current.is_none() && self.state.should_disconnect_when_idle() {
+                self.arm_idle_timer();
+            }
+        }
+    }
+
     /// Pulls the next track off the queue and plays it, skipping over any
     /// track that fails to resolve (e.g. a dead link) rather than getting
     /// stuck. Returns true if something actually started playing, false if
@@ -535,11 +566,18 @@ impl PlayerActor {
             let mut call_guard = call.lock().await;
             call_guard.play_only_input(input)
         };
-        let notifier = TrackEndNotifier {
+        let end_notifier = TrackEndNotifier {
             tx: self.self_tx.clone(),
             generation,
+            errored: false,
         };
-        let _ = handle.add_event(Event::Track(TrackEvent::End), notifier);
+        let _ = handle.add_event(Event::Track(TrackEvent::End), end_notifier);
+        let error_notifier = TrackEndNotifier {
+            tx: self.self_tx.clone(),
+            generation,
+            errored: true,
+        };
+        let _ = handle.add_event(Event::Track(TrackEvent::Error), error_notifier);
 
         self.current_handle = Some(handle);
         self.is_paused = false;

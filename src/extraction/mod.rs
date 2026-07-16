@@ -56,16 +56,18 @@ impl Extractor {
         Ok(tracks)
     }
 
-    /// Same as `search`, but also returns each track's score breakdown —
-    /// used by `!search`/`!why` to explain ranking decisions. Kept separate
-    /// from `search` so existing callers aren't affected.
+    /// Same as `search`, but also returns each track's score breakdown, and
+    /// takes an explicit result count instead of the config default — used
+    /// by `!search`/`!why`, which want more candidates to page through than
+    /// `!play`/`!vibe` want to pay the extraction cost for.
     pub async fn search_with_debug(
         &self,
         query: &str,
         requester_id: u64,
         curation_mode: bool,
+        count: usize,
     ) -> Result<Vec<(Track, scoring::ScoreBreakdown)>> {
-        let count = self.config.ytdlp_search_results.max(1);
+        let count = count.max(1);
         let args = ytdlp::search_args(&self.config, query, count);
         let entries = self.run(&args).await?;
         let ranked = scoring::rank_entries(query, entries, curation_mode);
