@@ -10,9 +10,7 @@ fn vibe_history_key(query: &str) -> String {
     query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
-/// Queue a run of tracks similar to what you name — an artist, or an artist
-/// + song (e.g. "zutomayo saturn") for song-level similarity (needs
-/// LASTFM_API_KEY configured).
+/// Queue similar tracks by artist/song. Requires LASTFM_API_KEY.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("vb"))]
 pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
