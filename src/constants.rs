@@ -1,32 +1,3 @@
-// ── Embed ────────────────────────────────────────────────────────────────────
-
-/// #FFAA40 — matches the Python EMBED_COLOUR.
-pub const EMBED_COLOUR: (u8, u8, u8) = (255, 170, 64);
-
-// ── Timing ───────────────────────────────────────────────────────────────────
-
-pub const STREAM_URL_REFRESH_AGE_SECS: u64 = 4 * 60 * 60;
-pub const SNAPSHOT_DEBOUNCE_SECS: f64 = 0.5;
-pub const NP_REFRESH_DEBOUNCE_SECS: f64 = 0.8;
-pub const VOICE_RECONNECT_ATTEMPTS: u32 = 2;
-
-// ── UI limits ────────────────────────────────────────────────────────────────
-
-pub const NOW_PLAYING_PREVIEW_LIMIT: usize = 5;
-pub const QUEUE_PAGE_SIZE: usize = 8;
-pub const QUEUE_VIEW_TIMEOUT_SECS: u64 = 300;
-pub const NOW_PLAYING_TIMEOUT_SECS: u64 = 1800;
-pub const SEARCH_SELECTION_PAGE_SIZE: usize = 5;
-pub const SEARCH_SELECTION_LIMIT: usize = 10;
-pub const SEARCH_SELECTION_TIMEOUT_SECS: u64 = 120;
-
-// ── Search result counts ─────────────────────────────────────────────────────
-
-/// Minimum results to fetch when the query has ≥4 signal tokens.
-pub const SEARCH_RESULT_COUNT_LONG: usize = 8;
-/// Minimum results to fetch when the query has ≥3 signal tokens.
-pub const SEARCH_RESULT_COUNT_MED: usize = 6;
-
 // ── Scoring: generic / noise tokens ─────────────────────────────────────────
 
 pub const SEARCH_GENERIC_TOKENS: &[&str] = &[
@@ -180,6 +151,3 @@ pub const SEARCH_CURATION_EXTRA_PHRASES: &[&str] = &[
 
 /// Preferred format string passed to yt-dlp via --format.
 pub const YTDLP_FORMAT: &str = "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best[height<=480]";
-
-/// Maximum rows of play_history kept per guild.
-pub const HISTORY_MAX_ROWS: i64 = 5000;

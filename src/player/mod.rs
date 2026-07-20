@@ -14,6 +14,7 @@ pub use queue::PlayerState;
 pub use snapshot::PlayerSnapshot;
 
 use crate::config::Config;
+use crate::db::Database;
 use crate::errors::{BotError, Result};
 use crate::extraction::Extractor;
 use crate::lastfm::LastFmClient;
@@ -38,6 +39,7 @@ impl GuildPlayer {
         http_client: reqwest::Client,
         lastfm: Option<LastFmClient>,
         config: Arc<Config>,
+        db: Arc<Database>,
         stay_connected: bool,
         autoplay: bool,
     ) -> Arc<Self> {
@@ -48,6 +50,7 @@ impl GuildPlayer {
             http_client,
             lastfm,
             config,
+            db,
             stay_connected,
             autoplay,
         );

@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, oneshot, watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 
 use crate::config::Config;
+use crate::db::Database;
 use crate::errors::{BotError, Result};
 use crate::extraction::Extractor;
 use crate::lastfm::LastFmClient;
@@ -119,6 +120,7 @@ pub struct PlayerActor {
     http_client: reqwest::Client,
     lastfm: Option<LastFmClient>,
     config: Arc<Config>,
+    db: Arc<Database>,
     state: PlayerState,
     call: Option<Arc<AsyncMutex<Call>>>,
     channel_id: Option<ChannelId>,
@@ -144,6 +146,7 @@ impl PlayerActor {
         http_client: reqwest::Client,
         lastfm: Option<LastFmClient>,
         config: Arc<Config>,
+        db: Arc<Database>,
         stay_connected: bool,
         autoplay: bool,
     ) -> (
@@ -160,6 +163,7 @@ impl PlayerActor {
             http_client,
             lastfm,
             config,
+            db,
             state: PlayerState::new(max_queue_size, stay_connected, autoplay),
             call: None,
             channel_id: None,
@@ -424,6 +428,13 @@ impl PlayerActor {
             return Err(BotError::QueueFull);
         }
 
+        if self.config.max_queue_size_per_user > 0
+            && self.state.user_queue_count(track.requester_id) >= self.config.max_queue_size_per_user
+        {
+            tracing::info!(guild_id = %self.guild_id, requester_id = track.requester_id, "handle_play: per-user queue cap reached");
+            return Err(BotError::UserQueueFull);
+        }
+
         if front {
             self.state.push_front(track);
         } else {
@@ -585,6 +596,21 @@ impl PlayerActor {
         self.paused_since = None;
         self.paused_total = std::time::Duration::ZERO;
         tracing::info!(guild_id = %self.guild_id, title = %track.title, "play_track: playback started");
+
+        let db = self.db.clone();
+        let guild_id = self.guild_id.get();
+        let title = track.title.clone();
+        let webpage_url = track.webpage_url.clone();
+        let requester_id = track.requester_id;
+        tokio::spawn(async move {
+            if let Err(e) = db
+                .add_play_history(guild_id, &title, &webpage_url, requester_id)
+                .await
+            {
+                tracing::warn!(guild_id = guild_id, error = %e, "play_track: failed to record play history");
+            }
+        });
+
         Ok(())
     }
 

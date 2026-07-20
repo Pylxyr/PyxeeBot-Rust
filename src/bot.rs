@@ -21,7 +21,7 @@ use crate::scoring::ScoreBreakdown;
 
 pub struct BotData {
     pub config: Arc<Config>,
-    pub db: Database,
+    pub db: Arc<Database>,
     pub songbird: Arc<Songbird>,
     pub extractor: Arc<Extractor>,
     pub lastfm: Option<LastFmClient>,
@@ -55,6 +55,7 @@ impl BotData {
                     self.http_client.clone(),
                     self.lastfm.clone(),
                     self.config.clone(),
+                    self.db.clone(),
                     stay_connected,
                     autoplay,
                 )
@@ -162,7 +163,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
 
                 Ok(Arc::new(BotData {
                     config: setup_config,
-                    db,
+                    db: Arc::new(db),
                     songbird,
                     extractor,
                     lastfm,
@@ -194,10 +195,12 @@ async fn on_error(error: poise::FrameworkError<'_, Arc<BotData>, anyhow::Error>)
         }
         poise::FrameworkError::Command { error, ctx, .. } => {
             tracing::warn!(command = %ctx.command().name, ?error, "command error");
-            let reply = poise::CreateReply::default()
-                .content(format!("Error: {error}"))
-                .ephemeral(true);
-            let _ = ctx.send(reply).await;
+            if ctx.data().config.error_announce {
+                let reply = poise::CreateReply::default()
+                    .content(format!("Error: {error}"))
+                    .ephemeral(true);
+                let _ = ctx.send(reply).await;
+            }
         }
         error => {
             if let Err(e) = poise::builtins::on_error(error).await {

@@ -17,17 +17,29 @@ pub use ytdlp::{extract_args, search_args};
 pub struct Extractor {
     config: Arc<Config>,
     cache: ResolveCache,
-    semaphore: Semaphore,
+    /// Gates full per-video extractions (resolve_stream / extract_url) —
+    /// the CPU-heavy path (format resolution, JS-challenge solving), kept
+    /// tight (default 1) to avoid contention on a single-vCPU box.
+    extract_semaphore: Semaphore,
+    /// Gates `--flat-playlist` search listings (search / search_with_debug)
+    /// separately, sized by `ytdlp_curation_concurrency`. These are much
+    /// lighter than a full extraction, so they can run with more headroom
+    /// without starving the extract path — e.g. !vibe's sequential batch of
+    /// searches no longer queues behind the same single permit that also
+    /// gates the actual audio-stream resolve.
+    search_semaphore: Semaphore,
 }
 
 impl Extractor {
     pub fn new(config: Arc<Config>) -> Self {
         let cache = ResolveCache::new(&config);
-        let semaphore = Semaphore::new(config.ytdlp_concurrent_extracts);
+        let extract_semaphore = Semaphore::new(config.ytdlp_concurrent_extracts);
+        let search_semaphore = Semaphore::new(config.ytdlp_curation_concurrency);
         Self {
             config,
             cache,
-            semaphore,
+            extract_semaphore,
+            search_semaphore,
         }
     }
 
@@ -45,7 +57,7 @@ impl Extractor {
     ) -> Result<Vec<Track>> {
         let count = self.config.ytdlp_search_results.max(1);
         let args = ytdlp::search_args(&self.config, query, count);
-        let entries = self.run(&args).await?;
+        let entries = self.run_search(&args).await?;
         let ranked = scoring::rank_entries(query, entries, curation_mode);
         let mut tracks = Vec::with_capacity(ranked.len());
         for (item, _) in &ranked {
@@ -69,7 +81,7 @@ impl Extractor {
     ) -> Result<Vec<(Track, scoring::ScoreBreakdown)>> {
         let count = count.max(1);
         let args = ytdlp::search_args(&self.config, query, count);
-        let entries = self.run(&args).await?;
+        let entries = self.run_search(&args).await?;
         let ranked = scoring::rank_entries(query, entries, curation_mode);
         let mut out = Vec::with_capacity(ranked.len());
         for (item, bd) in &ranked {
@@ -144,13 +156,27 @@ impl Extractor {
     async fn run(&self, args: &[String]) -> Result<Vec<Value>> {
         let queue_start = std::time::Instant::now();
         let _permit = self
-            .semaphore
+            .extract_semaphore
             .acquire()
             .await
             .expect("semaphore is never closed");
         let wait = queue_start.elapsed();
         if wait.as_millis() > 50 {
             tracing::info!(waited = ?wait, "extraction: waited for a free yt-dlp slot (YTDLP_CONCURRENT_EXTRACTS may be too low)");
+        }
+        ytdlp::run_ytdlp(&self.config, args).await
+    }
+
+    async fn run_search(&self, args: &[String]) -> Result<Vec<Value>> {
+        let queue_start = std::time::Instant::now();
+        let _permit = self
+            .search_semaphore
+            .acquire()
+            .await
+            .expect("semaphore is never closed");
+        let wait = queue_start.elapsed();
+        if wait.as_millis() > 50 {
+            tracing::info!(waited = ?wait, "extraction: waited for a free yt-dlp search slot (YTDLP_CURATION_CONCURRENCY may be too low)");
         }
         ytdlp::run_ytdlp(&self.config, args).await
     }

@@ -63,7 +63,14 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
     let data = ctx.data();
 
     let search_start = std::time::Instant::now();
-    let tracks = match data.extractor.search(&query, author_id.get(), false).await {
+    let trimmed = query.trim();
+    let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
+    let resolve_result = if is_url {
+        data.extractor.extract_url(trimmed, author_id.get(), false).await
+    } else {
+        data.extractor.search(&query, author_id.get(), false).await
+    };
+    let tracks = match resolve_result {
         Ok(t) => t,
         Err(e) => {
             tracing::warn!(guild_id = %guild_id, query = %query, elapsed = ?search_start.elapsed(), error = %e, "!play: search failed");

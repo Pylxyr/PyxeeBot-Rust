@@ -3,7 +3,10 @@ use std::sync::Arc;
 use crate::bot::Context;
 
 /// Search for a track and show the top results (use !play to queue one).
-#[poise::command(prefix_command, slash_command, guild_only, aliases("s"))]
+// Note: no "s" alias here — it collided with `skip`'s "s" alias (only one
+// of the two was ever reachable via `!s`, depending on registration order).
+// Skip kept it since it's the more frequently used of the two.
+#[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn search(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());

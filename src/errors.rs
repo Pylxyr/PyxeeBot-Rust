@@ -14,6 +14,9 @@ pub enum BotError {
     #[error("queue is full")]
     QueueFull,
 
+    #[error("you already have the maximum number of tracks queued")]
+    UserQueueFull,
+
     #[error("no playable result found for {0:?}")]
     NoResult(String),
 
