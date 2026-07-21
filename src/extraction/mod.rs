@@ -102,10 +102,20 @@ impl Extractor {
     ) -> Result<Vec<Track>> {
         let args = ytdlp::extract_args(&self.config, url, flat_playlist);
         let entries = self.run(&args).await?;
-        Ok(entries
-            .iter()
-            .map(|item| track_from_json(item, requester_id, url))
-            .collect())
+        let mut tracks = Vec::with_capacity(entries.len());
+        for item in &entries {
+            let track = track_from_json(item, requester_id, url);
+            // With flat_playlist=false (the only way this is currently
+            // called), this is a full extraction (http_headers present), so
+            // this primes the cache and handle_play's speculative
+            // resolve_stream for this same track is a hit instead of a
+            // second full extract. If flat_playlist=true is ever used,
+            // prime_cache is already a safe no-op for those entries, same
+            // as it is for search()'s flat-playlist listings.
+            self.prime_cache(&track.webpage_url, item).await;
+            tracks.push(track);
+        }
+        Ok(tracks)
     }
 
     /// Resolves (or returns cached) the direct audio stream URL for a track.
@@ -126,6 +136,41 @@ impl Extractor {
             .insert(track.webpage_url.clone(), info.clone())
             .await;
         Ok(info)
+    }
+
+    /// Best-effort sibling of `resolve_stream`, for background prefetch
+    /// only: if the extract semaphore has no free permit *right now*, this
+    /// returns `None` immediately instead of queuing for one. Without this,
+    /// a low-priority prefetch (there's at most one in flight at a time,
+    /// per `YTDLP_PREFETCH_COUNT`) can end up occupying the sole
+    /// `YTDLP_CONCURRENT_EXTRACTS=1` permit's queue slot right as an urgent
+    /// on-demand `resolve_stream` call — e.g. from a `!skip` — needs it,
+    /// adding a full extraction's worth of avoidable latency to something
+    /// that's supposed to feel instant. A skipped prefetch isn't lost work:
+    /// the track just resolves on-demand later, exactly as if it had never
+    /// been prefetched. Cache hits still short-circuit as normal, since
+    /// those don't need a permit at all.
+    pub async fn try_resolve_stream(&self, track: &Track) -> Option<Result<ResolvedInfo>> {
+        if let Some(cached) = self.cache.get(&track.webpage_url).await {
+            return Some(Ok(cached));
+        }
+        let _permit = self.extract_semaphore.try_acquire().ok()?;
+        let args = ytdlp::extract_args(&self.config, &track.webpage_url, false);
+        let entries = match ytdlp::run_ytdlp(&self.config, &args).await {
+            Ok(e) => e,
+            Err(e) => return Some(Err(e)),
+        };
+        let Some(item) = entries.into_iter().next() else {
+            return Some(Err(BotError::NoResult(track.webpage_url.clone())));
+        };
+        let info = match resolved_info_from_json(&item) {
+            Ok(i) => i,
+            Err(e) => return Some(Err(e)),
+        };
+        self.cache
+            .insert(track.webpage_url.clone(), info.clone())
+            .await;
+        Some(Ok(info))
     }
 
     pub async fn invalidate_stream(&self, webpage_url: &str) {

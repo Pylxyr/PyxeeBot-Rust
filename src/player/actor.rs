@@ -716,10 +716,13 @@ impl PlayerActor {
             let guild_id = self.guild_id;
             tokio::spawn(async move {
                 let title = track.title.clone();
-                match extractor.resolve_stream(&track).await {
-                    Ok(_) => tracing::info!(%guild_id, %title, "spawn_prefetch: resolved"),
-                    Err(e) => {
+                match extractor.try_resolve_stream(&track).await {
+                    Some(Ok(_)) => tracing::info!(%guild_id, %title, "spawn_prefetch: resolved"),
+                    Some(Err(e)) => {
                         tracing::warn!(%guild_id, %title, error = %e, "spawn_prefetch: failed")
+                    }
+                    None => {
+                        tracing::debug!(%guild_id, %title, "spawn_prefetch: skipped, extractor busy — will resolve on-demand instead")
                     }
                 }
             });

@@ -34,7 +34,7 @@ A Discord music bot built on serenity + poise + songbird, running FFmpeg-free (S
 
 - **`player/`** — an actor per guild (`PlayerActor`), driven by an mpsc command channel, broadcasting read-only state via a `watch` channel (`GuildPlayer` is the public handle). `PlayerState` (`queue.rs`) is the pure, fully-tested queue/loop-mode state machine — deliberately kept independent of songbird types.
 - **`scoring/`** — search-result ranking engine (title/uploader overlap, fuzzy matching, discouraged-token penalties, JP-original detection, recency/view bonuses, etc). Feeds both `!search` and `!vibe`.
-- **`extraction/`** — yt-dlp subprocess wrapper + a moka-backed resolve cache (TTL-based, no manual expiry bookkeeping). Two independent semaphores gate concurrency: `ytdlp_concurrent_extracts` for full per-video resolves, `ytdlp_curation_concurrency` for lighter `--flat-playlist` search listings.
+- **`extraction/`** — yt-dlp subprocess wrapper + a moka-backed resolve cache (TTL-based, no manual expiry bookkeeping). Two independent semaphores gate concurrency: `ytdlp_concurrent_extracts` for full per-video resolves, `ytdlp_curation_concurrency` for lighter `--flat-playlist` search listings. A few things are specifically tuned for time-to-first-audio: `!play` overlaps the "Searching..." reply with the actual search instead of sending it first; connecting to voice and speculatively resolving the picked track's stream both run concurrently (`tokio::join!`) instead of back-to-back; a pasted URL's extraction result primes the resolve cache so that speculative resolve is a hit instead of a redundant second full extraction; and background prefetch of upcoming tracks (`try_resolve_stream`) never queues for the single extract permit — if it's busy, prefetch just skips that round rather than sitting in front of an urgent on-demand resolve (e.g. from `!skip`).
 - **`db/`** — SQLite via sqlx, WAL mode. Guild settings are cached in-memory (`DashMap`) after first read.
 - **`events.rs`** — voice-state tracking (empty-channel/stay-connected disconnect logic, force-kick rejoin) and component-interaction routing (buttons, select menus).
 - **`lastfm.rs`** — minimal `artist.getsimilar` / `track.search` / `track.getsimilar` client for curation features.
@@ -112,13 +112,14 @@ Deployment is fully automated via `.github/workflows/release.yml`: every push to
 
 ## CI
 
-`.github/workflows/release.yml` runs four jobs on every push to `main` (and `workflow_dispatch`):
+`.github/workflows/release.yml` runs two jobs on every push to `main` (and `workflow_dispatch`):
 
 - **`test`** — `cargo test --all-features`
 - **`lint`** — `cargo clippy --all-targets --all-features -- -D warnings`
-- **`audit`** — `cargo audit` via `rustsec/audit-check`, honouring the exceptions in `.cargo/audit.toml`. Advisory-only (`continue-on-error`) so a fresh RUSTSEC advisory in an unrelated transitive dependency doesn't freeze every deploy — it's visible in the job log/summary without blocking `build`/`deploy`
 - **`build`** — only runs once `test` and `lint` both pass; builds the release binary and (on a `v*` tag) attaches it to a GitHub Release
 
 `deploy` still only runs on a push to `main`, after `build` succeeds.
 
 First run after adding `test`/`lint` as real gates might turn up pre-existing warnings this session didn't touch (clippy in particular, since `-D warnings` is strict and nothing enforced it before) — that's expected the first time, not a sign something broke.
+
+(A `cargo audit` job was tried and removed — the findings weren't covered by `.cargo/audit.toml`'s existing exceptions, and the action needs `checks: write` permission this workflow doesn't grant, which errored on every run regardless of findings. `.cargo/audit.toml` is still there if you want to run `cargo audit` locally or wire it up properly later.)

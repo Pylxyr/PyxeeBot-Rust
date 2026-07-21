@@ -56,7 +56,8 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
     play_or_queue(ctx, query, false).await
 }
 
-
+/// Search and queue a track at the front of the queue, ahead of everything
+/// else (the current track keeps playing).
 #[poise::command(prefix_command, slash_command, guild_only, aliases("pn"))]
 pub async fn playnext(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     play_or_queue(ctx, query, true).await
@@ -73,17 +74,24 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
     };
 
     tracing::info!(guild_id = %guild_id, user = %author_id, query = %query, front, "!play: received");
-    let handle = ctx.say(format!("Searching for `{query}`...")).await?;
     let data = ctx.data();
 
     let search_start = std::time::Instant::now();
     let trimmed = query.trim();
     let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
-    let resolve_result = if is_url {
-        data.extractor.extract_url(trimmed, author_id.get(), false).await
-    } else {
-        data.extractor.search(&query, author_id.get(), false).await
+    let say_fut = ctx.say(format!("Searching for `{query}`..."));
+    let resolve_fut = async {
+        if is_url {
+            data.extractor.extract_url(trimmed, author_id.get(), false).await
+        } else {
+            data.extractor.search(&query, author_id.get(), false).await
+        }
     };
+    // Sending the "Searching..." message and running the actual search are
+    // independent, so overlap them instead of paying the Discord API
+    // round-trip before the search even starts.
+    let (handle, resolve_result) = tokio::join!(say_fut, resolve_fut);
+    let handle = handle?;
     let tracks = match resolve_result {
         Ok(t) => t,
         Err(e) => {
