@@ -56,8 +56,7 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
     play_or_queue(ctx, query, false).await
 }
 
-/// Search and queue a track at the front of the queue, ahead of everything
-/// else (the current track keeps playing).
+
 #[poise::command(prefix_command, slash_command, guild_only, aliases("pn"))]
 pub async fn playnext(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     play_or_queue(ctx, query, true).await
