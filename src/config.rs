@@ -144,7 +144,7 @@ impl Config {
             np_auto_refresh_interval: int_env("NP_AUTO_REFRESH_INTERVAL", 30).max(15) as u32,
             error_announce: bool_env("ERROR_ANNOUNCE", true),
             lastfm_api_key,
-            restore_queue_on_restart: bool_env("RESTORE_QUEUE_ON_RESTART", true),
+            restore_queue_on_restart: bool_env("RESTORE_QUEUE_ON_RESTART", false),
             bot_activity_url,
         })
     }

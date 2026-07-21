@@ -25,12 +25,6 @@ pub enum BotError {
 
     #[error("voice connection failed: {0}")]
     Voice(String),
-
-    #[error("you must be in the same voice channel as the bot")]
-    WrongVoiceChannel,
-
-    #[error("you need the DJ role or manage-channels permission for this")]
-    NotDj,
 }
 
 pub type Result<T> = std::result::Result<T, BotError>;

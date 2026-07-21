@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use poise::serenity_prelude::ChannelId;
 use rand::seq::SliceRandom;
 
 use super::snapshot::PlayerSnapshot;
@@ -166,6 +167,7 @@ impl PlayerState {
         is_connected: bool,
         is_paused: bool,
         elapsed_secs: i64,
+        channel_id: Option<ChannelId>,
     ) -> PlayerSnapshot {
         PlayerSnapshot {
             current: self.current.clone(),
@@ -175,6 +177,7 @@ impl PlayerState {
             stay_connected: self.stay_connected,
             is_paused,
             is_connected,
+            channel_id,
             total_duration_secs: self.total_duration,
             elapsed_secs,
         }

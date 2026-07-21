@@ -188,10 +188,56 @@ impl PlayerActor {
             let is_shutdown = matches!(cmd, PlayerCommand::Shutdown);
             self.handle(cmd).await;
             self.publish_snapshot();
+            self.persist_queue_snapshot();
             if is_shutdown {
                 break;
             }
         }
+    }
+
+    /// Fire-and-forget: mirrors the current `current` + `queue` to the DB so
+    /// `restore_queue_on_restart` has something to reload. `save_queue_snapshot`
+    /// hashes its input and no-ops when nothing changed, so calling this after
+    /// every command (including ones that don't touch the queue) is cheap.
+    fn persist_queue_snapshot(&self) {
+        let db = self.db.clone();
+        let guild_id = self.guild_id.get();
+        let mut queued: Vec<Track> = Vec::with_capacity(self.state.queue.len() + 1);
+        if let Some(current) = &self.state.current {
+            queued.push(current.clone());
+        }
+        queued.extend(self.state.queue.iter().cloned());
+        tokio::spawn(async move {
+            let refs: Vec<crate::db::QueueEntryRef> = queued
+                .iter()
+                .map(|t| crate::db::QueueEntryRef {
+                    query: &t.query,
+                    title: &t.title,
+                    webpage_url: &t.webpage_url,
+                    requester_id: t.requester_id,
+                })
+                .collect();
+            if let Err(e) = db.save_queue_snapshot(guild_id, &refs).await {
+                tracing::warn!(guild_id = guild_id, error = %e, "persist_queue_snapshot: failed to save");
+            }
+        });
+    }
+
+    /// Fire-and-forget: records which channel this guild should reconnect to
+    /// on the next restart (`None` clears it, e.g. on an explicit `!leave`).
+    fn persist_last_voice_channel(&self, channel_id: Option<ChannelId>) {
+        let db = self.db.clone();
+        let guild_id = self.guild_id.get();
+        let default_prefix = self.config.default_prefix.clone();
+        let channel_id = channel_id.map(|c| c.get());
+        tokio::spawn(async move {
+            if let Err(e) = db
+                .set_last_voice_channel(guild_id, channel_id, &default_prefix)
+                .await
+            {
+                tracing::warn!(guild_id = guild_id, error = %e, "failed to persist last voice channel");
+            }
+        });
     }
 
     fn elapsed_secs(&self) -> i64 {
@@ -214,6 +260,7 @@ impl PlayerActor {
             is_connected,
             self.is_paused,
             self.elapsed_secs(),
+            self.channel_id,
         ));
     }
 
@@ -275,6 +322,7 @@ impl PlayerActor {
                 let result = lifecycle::disconnect(&self.songbird, self.guild_id).await;
                 self.call = None;
                 self.channel_id = None;
+                self.persist_last_voice_channel(None);
                 let _ = reply.send(result);
             }
             PlayerCommand::Connect { channel_id, reply } => {
@@ -283,6 +331,7 @@ impl PlayerActor {
                     Ok(call) => {
                         self.call = Some(call);
                         self.channel_id = Some(channel_id);
+                        self.persist_last_voice_channel(Some(channel_id));
                         Ok(())
                     }
                     Err(e) => Err(e),
@@ -373,6 +422,7 @@ impl PlayerActor {
                     let _ = lifecycle::disconnect(&self.songbird, self.guild_id).await;
                     self.call = None;
                     self.channel_id = None;
+                    self.persist_last_voice_channel(None);
                 }
             }
             PlayerCommand::EmptyTimeout => {
@@ -390,6 +440,7 @@ impl PlayerActor {
                     let _ = lifecycle::disconnect(&self.songbird, self.guild_id).await;
                     self.call = None;
                     self.channel_id = None;
+                    self.persist_last_voice_channel(None);
                 }
             }
             PlayerCommand::Shutdown => {
@@ -421,6 +472,7 @@ impl PlayerActor {
             tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect + speculative resolve finished");
             self.call = Some(call);
             self.channel_id = Some(channel_id);
+            self.persist_last_voice_channel(Some(channel_id));
         }
 
         if self.state.is_full() {
@@ -452,7 +504,7 @@ impl PlayerActor {
 
         tracing::info!(guild_id = %self.guild_id, now_playing, failed, "handle_play: done");
         Ok(PlayOutcome {
-            position: self.state.queue.len(),
+            position: if front { 1 } else { self.state.queue.len() },
             now_playing,
             failed,
         })

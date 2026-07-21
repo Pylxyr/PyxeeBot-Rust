@@ -16,7 +16,7 @@ A Discord music bot built on serenity + poise + songbird, running FFmpeg-free (S
 
 ## Features
 
-**Playback** — `join`, `leave`, `play` (also resolves a pasted URL directly, not just search terms), `skip`, `stop`, `pause`, `resume`, `previous`, `loop`, `nowplaying` (with Pause/Skip/Loop buttons)
+**Playback** — `join`, `leave`, `play` (also resolves a pasted URL directly, not just search terms), `playnext` (queue at the front, ahead of everything else), `skip`, `stop`, `pause`, `resume`, `previous`, `loop`, `nowplaying` (with Pause/Skip/Loop buttons, and an optional auto-refreshing message — see `NP_AUTO_REFRESH`)
 
 **Queue** — `queue`, `clear`, `shuffle`, `move`, `remove`, `history`, `toptracks`, `toprequestors`
 
@@ -27,6 +27,8 @@ A Discord music bot built on serenity + poise + songbird, running FFmpeg-free (S
 **Curation** — `vibe` (Last.fm-powered similar-artist discovery), `autoplay` (auto-queues a similar track instead of going idle — requires `LASTFM_API_KEY`)
 
 **Admin** — `stay` (24/7 mode), `setdj`, `cleardj`, `dj`, `setprefix` (per-guild custom prefix), `stats`
+
+**Permissions** — `clear`/`shuffle`/`move` need the DJ role or Manage Channels; `remove` needs to be the track's requester or a DJ; `skip`/`stop`/`pause`/`resume`/`previous`/`loop` need to be in the same voice channel as the bot (DJs are exempt from that last one, same as everywhere else).
 
 ## Architecture
 
@@ -69,16 +71,10 @@ All via environment variables (typically a `.env` file next to the binary — th
 | `YTDLP_EXTRACT_TIMEOUT_SECONDS` | `45` | min `5` |
 | `ERROR_ANNOUNCE` | `true` | whether command errors get an in-channel reply (they're always logged either way) |
 | `LASTFM_API_KEY` | *(none)* | enables `!vibe` / `!autoplay` |
-
-### Parsed but not yet wired up
-
-These are read from the environment and validated, but nothing in the code currently acts on them — set them and nothing will happen yet:
-
-| Variable | Default | What it's meant for |
-|---|---|---|
-| `NP_AUTO_REFRESH` / `NP_AUTO_REFRESH_INTERVAL` | `false` / `30` | periodically refresh the `!nowplaying` message in place |
-| `RESTORE_QUEUE_ON_RESTART` | `true` | reload each guild's queue after a bot restart — the DB layer (`save_queue_snapshot`/`load_queue_snapshot`) exists and is tested, but nothing calls it, and the schema doesn't store a `channel_id` to reconnect to yet |
-| `BOT_ACTIVITY_URL` | `pylxyr.github.io/PyxeeBot-Page/` | intended for the bot's Discord presence/status; not currently set anywhere |
+| `NP_AUTO_REFRESH` | `false` | if set, `!nowplaying` edits its message in place every `NP_AUTO_REFRESH_INTERVAL` seconds instead of being a one-shot snapshot. Stops on its own once nothing's playing, the edit starts failing (message deleted), or after 2 hours, whichever comes first |
+| `NP_AUTO_REFRESH_INTERVAL` | `30` | seconds, min `15` |
+| `RESTORE_QUEUE_ON_RESTART` | `false` | reconnect and replay each guild's queue after a restart. **Off by default on purpose** — `release.yml` restarts the live service on every push to `main`, and turning this on means every routine deploy also auto-rejoins voice and resumes playback for every guild that was active. Turn it on if that's what you want; leave it off if you'd rather restarts be a clean stop |
+| `BOT_ACTIVITY_URL` | `pylxyr.github.io/PyxeeBot-Page/` | shown as the bot's Discord presence ("Watching \<url\>"). Set to an empty string to disable |
 
 ## Requirements
 
@@ -106,14 +102,23 @@ cargo test --all-features
 
 Covers: scoring engine (golden-style ranking tests), player queue state machine (the exact regression classes fixed in the Python version — `total_duration` eviction accounting, `play_previous`, loop-mode requeue, `stay_connected`/idle guards), extraction argument builders, database round-trips, and UI content formatting.
 
-Note: `cargo test` isn't currently run in CI (see below) — it's on you to run it locally before pushing to `main`.
+Also runs in CI on every push to `main` (see [CI](#ci) below) — `build`/`deploy` won't proceed if this fails.
 
 ## Deploy
 
 Deployment is fully automated via `.github/workflows/release.yml`: every push to `main` builds a release binary and does an atomic swap + `systemctl restart pyxeebotr` on the server over SSH, with automatic rollback if the service doesn't come back up. Pushing a `v*` tag also builds and attaches the binary to a GitHub Release, but only a push to `main` triggers the actual deploy step. Nothing manual is needed for a normal deploy — just push to `main`.
 
-`deploy.sh` and `deploy/musicbot.service` are older, currently-stale leftovers from before that pipeline existed: they target a `musicbot` systemd unit at `~/musicbot`, not the `pyxeebotr` unit at `~/pyxeebotr` that `release.yml` actually deploys to. Don't run `deploy.sh` expecting it to hit the live service — either update it to match `pyxeebotr`/`~/pyxeebotr`, or remove it, whichever you'd rather do.
+`deploy.sh` + `deploy/pyxeebotr.service` are a manual fallback (e.g. for a fresh server, or deploying without going through GitHub Actions) — both target the same `pyxeebotr` service at `~/pyxeebotr` that `release.yml` uses, so they should stay in sync with it if that ever changes.
 
 ## CI
 
-Currently just the one workflow — `.github/workflows/release.yml` — which builds and deploys on push to `main`. There's no separate lint/test/audit workflow in this repo (despite `.cargo/audit.toml` existing with some documented `cargo audit` exceptions — it's not currently invoked anywhere in CI). Worth adding a workflow that runs `cargo test`/`cargo clippy`/`cargo audit` on pull requests, since right now nothing catches a regression before it's live.
+`.github/workflows/release.yml` runs four jobs on every push to `main` (and `workflow_dispatch`):
+
+- **`test`** — `cargo test --all-features`
+- **`lint`** — `cargo clippy --all-targets --all-features -- -D warnings`
+- **`audit`** — `cargo audit` via `rustsec/audit-check`, honouring the exceptions in `.cargo/audit.toml`. Advisory-only (`continue-on-error`) so a fresh RUSTSEC advisory in an unrelated transitive dependency doesn't freeze every deploy — it's visible in the job log/summary without blocking `build`/`deploy`
+- **`build`** — only runs once `test` and `lint` both pass; builds the release binary and (on a `v*` tag) attaches it to a GitHub Release
+
+`deploy` still only runs on a push to `main`, after `build` succeeds.
+
+First run after adding `test`/`lint` as real gates might turn up pre-existing warnings this session didn't touch (clippy in particular, since `-D warnings` is strict and nothing enforced it before) — that's expected the first time, not a sign something broke.

@@ -201,6 +201,41 @@ impl Database {
         Ok(())
     }
 
+    pub async fn set_last_voice_channel(
+        &self,
+        guild_id: u64,
+        channel_id: Option<u64>,
+        default_prefix: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO guild_settings (guild_id, prefix, last_voice_channel_id) VALUES (?, ?, ?)
+             ON CONFLICT(guild_id) DO UPDATE SET last_voice_channel_id = excluded.last_voice_channel_id",
+        )
+        .bind(guild_id as i64)
+        .bind(default_prefix)
+        .bind(channel_id.map(|c| c as i64))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Guilds worth attempting to restore on startup: a saved voice channel
+    /// *and* at least one queued track. `RESTORE_QUEUE_ON_RESTART` gates
+    /// whether this is ever called; this doesn't check the config itself.
+    pub async fn list_restorable_guilds(&self) -> sqlx::Result<Vec<(u64, u64)>> {
+        let rows: Vec<(i64, i64)> = sqlx::query_as::<_, (i64, i64)>(
+            "SELECT gs.guild_id, gs.last_voice_channel_id
+             FROM guild_settings AS gs
+             WHERE gs.last_voice_channel_id IS NOT NULL
+               AND EXISTS (
+                   SELECT 1 FROM queue_snapshots AS qs WHERE qs.guild_id = gs.guild_id
+               )",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(g, c)| (g as u64, c as u64)).collect())
+    }
+
     // ── saved playlists ──────────────────────────────────────────────────────
 
     pub async fn save_playlist(

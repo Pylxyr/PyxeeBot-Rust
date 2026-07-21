@@ -48,3 +48,36 @@ pub async fn require_dj(ctx: Context<'_>) -> anyhow::Result<bool> {
         Ok(false)
     }
 }
+
+/// Restricts playback-control commands (skip/stop/pause/resume/previous/
+/// loop) to users actually in the bot's voice channel, so someone in an
+/// unrelated text or voice channel can't disrupt a session they're not
+/// part of. DJs are exempt, same as `require_dj` lets them act from
+/// anywhere. If the bot isn't connected to a channel at all, there's
+/// nothing to be "wrong" about, so this allows the action through (whatever
+/// the command does in that case, e.g. reporting nothing is playing, is
+/// its own concern).
+pub async fn require_same_voice_channel(ctx: Context<'_>) -> anyhow::Result<bool> {
+    if is_dj(ctx).await {
+        return Ok(true);
+    }
+    let Some(guild_id) = ctx.guild_id() else {
+        return Ok(true);
+    };
+    let bot_channel = ctx.data().player_for(guild_id).await.snapshot().channel_id;
+    let Some(bot_channel) = bot_channel else {
+        return Ok(true);
+    };
+    let user_channel = ctx
+        .serenity_context()
+        .cache
+        .guild(guild_id)
+        .and_then(|g| g.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id));
+    if user_channel == Some(bot_channel) {
+        Ok(true)
+    } else {
+        ctx.say("You need to be in the same voice channel as the bot for this.")
+            .await?;
+        Ok(false)
+    }
+}

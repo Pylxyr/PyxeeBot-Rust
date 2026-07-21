@@ -1,6 +1,10 @@
-use poise::serenity_prelude::ChannelId;
+use std::sync::Arc;
+use std::time::Duration;
+
+use poise::serenity_prelude::{ChannelId, EditMessage, Http, MessageId};
 
 use crate::bot::Context;
+use crate::player::GuildPlayer;
 
 fn voice_channel_of(
     ctx: Context<'_>,
@@ -49,6 +53,17 @@ pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
 /// Search and play (or queue) a track.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("p"))]
 pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
+    play_or_queue(ctx, query, false).await
+}
+
+/// Search and queue a track at the front of the queue, ahead of everything
+/// else (the current track keeps playing).
+#[poise::command(prefix_command, slash_command, guild_only, aliases("pn"))]
+pub async fn playnext(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
+    play_or_queue(ctx, query, true).await
+}
+
+async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
@@ -58,7 +73,7 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
         return Ok(());
     };
 
-    tracing::info!(guild_id = %guild_id, user = %author_id, query = %query, "!play: received");
+    tracing::info!(guild_id = %guild_id, user = %author_id, query = %query, front, "!play: received");
     let handle = ctx.say(format!("Searching for `{query}`...")).await?;
     let data = ctx.data();
 
@@ -100,7 +115,7 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
     let title = track.escaped_title();
     tracing::info!(guild_id = %guild_id, title = %track.title, url = %track.webpage_url, "!play: track selected, calling player.play");
     let play_start = std::time::Instant::now();
-    let result = player.play(track, false, channel_id).await;
+    let result = player.play(track, front, channel_id).await;
     tracing::info!(guild_id = %guild_id, elapsed = ?play_start.elapsed(), ok = result.is_ok(), "!play: player.play returned");
 
     match result {
@@ -151,6 +166,9 @@ pub async fn skip(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    if !super::helpers::require_same_voice_channel(ctx).await? {
+        return Ok(());
+    }
     ctx.data().player_for(guild_id).await.skip();
     ctx.say("Skipped.").await?;
     Ok(())
@@ -162,6 +180,9 @@ pub async fn stop(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    if !super::helpers::require_same_voice_channel(ctx).await? {
+        return Ok(());
+    }
     ctx.data().player_for(guild_id).await.stop();
     ctx.say("Stopped and cleared the queue.").await?;
     Ok(())
@@ -173,6 +194,9 @@ pub async fn pause(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    if !super::helpers::require_same_voice_channel(ctx).await? {
+        return Ok(());
+    }
     ctx.data().player_for(guild_id).await.pause();
     ctx.say("Paused.").await?;
     Ok(())
@@ -184,6 +208,9 @@ pub async fn resume(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    if !super::helpers::require_same_voice_channel(ctx).await? {
+        return Ok(());
+    }
     ctx.data().player_for(guild_id).await.resume();
     ctx.say("Resumed.").await?;
     Ok(())
@@ -195,6 +222,9 @@ pub async fn previous(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    if !super::helpers::require_same_voice_channel(ctx).await? {
+        return Ok(());
+    }
     let ok = ctx.data().player_for(guild_id).await.previous().await;
     if ok {
         ctx.say("Playing the previous track.").await?;
@@ -216,6 +246,9 @@ pub async fn loop_cmd(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    if !super::helpers::require_same_voice_channel(ctx).await? {
+        return Ok(());
+    }
     let mode = ctx
         .data()
         .player_for(guild_id)
@@ -232,14 +265,70 @@ pub async fn nowplaying(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    let snapshot = ctx.data().player_for(guild_id).await.snapshot();
+    let player = ctx.data().player_for(guild_id).await;
+    let snapshot = player.snapshot();
     let content = crate::components::now_playing_content(&snapshot);
     let buttons = crate::components::now_playing_buttons(&snapshot);
-    ctx.send(
-        poise::CreateReply::default()
-            .content(content)
-            .components(buttons),
-    )
-    .await?;
+    let reply = ctx
+        .send(
+            poise::CreateReply::default()
+                .content(content)
+                .components(buttons),
+        )
+        .await?;
+
+    if ctx.data().config.np_auto_refresh {
+        if let Ok(message) = reply.message().await {
+            let http = ctx.serenity_context().http.clone();
+            let channel_id = ctx.channel_id();
+            let message_id = message.id;
+            let interval_secs = u64::from(ctx.data().config.np_auto_refresh_interval);
+            tokio::spawn(refresh_now_playing(
+                http,
+                channel_id,
+                message_id,
+                player,
+                interval_secs,
+            ));
+        }
+    }
     Ok(())
+}
+
+/// Background loop for `NP_AUTO_REFRESH`: edits the `!nowplaying` message in
+/// place every `interval_secs` until nothing is playing anymore, the message
+/// is gone (edit fails), or a generous max duration is hit — whichever comes
+/// first. Runs detached from the original command's context/lifetime, which
+/// is why it takes an owned `Arc<Http>` instead of a poise `Context`.
+async fn refresh_now_playing(
+    http: Arc<Http>,
+    channel_id: ChannelId,
+    message_id: MessageId,
+    player: Arc<GuildPlayer>,
+    interval_secs: u64,
+) {
+    const MAX_REFRESH_SECS: u64 = 2 * 60 * 60;
+    let interval_secs = interval_secs.max(1);
+    let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+    ticker.tick().await; // first tick fires immediately; the sent message is already fresh
+
+    let mut elapsed = 0u64;
+    loop {
+        ticker.tick().await;
+        elapsed += interval_secs;
+        if elapsed > MAX_REFRESH_SECS {
+            break;
+        }
+
+        let snapshot = player.snapshot();
+        if snapshot.current.is_none() {
+            break;
+        }
+        let content = crate::components::now_playing_content(&snapshot);
+        let buttons = crate::components::now_playing_buttons(&snapshot);
+        let edit = EditMessage::new().content(content).components(buttons);
+        if channel_id.edit_message(&http, message_id, edit).await.is_err() {
+            break;
+        }
+    }
 }

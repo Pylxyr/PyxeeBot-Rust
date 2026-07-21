@@ -20,6 +20,7 @@ pub fn all() -> Vec<poise::Command<Arc<BotData>, Error>> {
         playback::join(),
         playback::leave(),
         playback::play(),
+        playback::playnext(),
         playback::skip(),
         playback::stop(),
         playback::pause(),
