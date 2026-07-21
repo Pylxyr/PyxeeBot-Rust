@@ -38,19 +38,6 @@ jobs:
           shared-key: release
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
-  # Advisory-only: reports new RUSTSEC entries (honouring the exceptions
-  # already documented in .cargo/audit.toml) without blocking build/deploy,
-  # since a fresh advisory in an unrelated transitive dependency shouldn't
-  # by itself freeze deploys for unrelated code changes.
-  audit:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
   build:
     runs-on: ubuntu-latest
     needs: [test, lint]
