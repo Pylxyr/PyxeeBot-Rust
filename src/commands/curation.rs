@@ -102,9 +102,25 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     }
 
     let player = data.player_for(guild_id).await;
+
+    let mut search_tasks = tokio::task::JoinSet::new();
+    for (idx, query) in queries.iter().cloned().enumerate() {
+        let extractor = data.extractor.clone();
+        search_tasks.spawn(async move {
+            let result = extractor.search(&query, author_id, true).await;
+            (idx, query, result)
+        });
+    }
+    let mut search_results: Vec<_> = (0..queries.len()).map(|_| None).collect();
+    while let Some(joined) = search_tasks.join_next().await {
+        if let Ok((idx, query, result)) = joined {
+            search_results[idx] = Some((query, result));
+        }
+    }
+
     let mut queued = Vec::new();
-    for query in &queries {
-        match data.extractor.search(query, author_id, true).await {
+    for (query, result) in search_results.into_iter().flatten() {
+        match result {
             Ok(tracks) if !tracks.is_empty() => {
                 let track = tracks.into_iter().next().unwrap();
                 let title = track.escaped_title();
@@ -115,7 +131,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
                 {
                     queued.push(title);
                     let mut history = data.vibe_history.entry(guild_id).or_default();
-                    let key = vibe_history_key(query);
+                    let key = vibe_history_key(&query);
                     history.retain(|k| k != &key);
                     history.push_back(key);
                     while history.len() > VIBE_HISTORY_CAP {

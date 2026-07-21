@@ -56,7 +56,8 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
     play_or_queue(ctx, query, false).await
 }
 
-
+/// Search and queue a track at the front of the queue, ahead of everything
+/// else (the current track keeps playing).
 #[poise::command(prefix_command, slash_command, guild_only, aliases("pn"))]
 pub async fn playnext(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     play_or_queue(ctx, query, true).await
@@ -86,9 +87,7 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
             data.extractor.search(&query, author_id.get(), false).await
         }
     };
-    // Sending the "Searching..." message and running the actual search are
-    // independent, so overlap them instead of paying the Discord API
-    // round-trip before the search even starts.
+    // Overlap the reply with the search instead of doing them in series.
     let (handle, resolve_result) = tokio::join!(say_fut, resolve_fut);
     let handle = handle?;
     let tracks = match resolve_result {
@@ -301,11 +300,8 @@ pub async fn nowplaying(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Background loop for `NP_AUTO_REFRESH`: edits the `!nowplaying` message in
-/// place every `interval_secs` until nothing is playing anymore, the message
-/// is gone (edit fails), or a generous max duration is hit — whichever comes
-/// first. Runs detached from the original command's context/lifetime, which
-/// is why it takes an owned `Arc<Http>` instead of a poise `Context`.
+/// Detached loop for `NP_AUTO_REFRESH`; stops when nothing's playing, the
+/// edit fails, or a max duration is hit.
 async fn refresh_now_playing(
     http: Arc<Http>,
     channel_id: ChannelId,

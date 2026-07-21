@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -135,6 +136,7 @@ pub struct PlayerActor {
     track_started_at: Option<std::time::Instant>,
     paused_since: Option<std::time::Instant>,
     paused_total: std::time::Duration,
+    last_snapshot_hash: Option<u64>,
 }
 
 impl PlayerActor {
@@ -178,6 +180,7 @@ impl PlayerActor {
             track_started_at: None,
             paused_since: None,
             paused_total: std::time::Duration::ZERO,
+            last_snapshot_hash: None,
         };
         tokio::spawn(actor.run());
         (tx, snapshot_rx)
@@ -195,11 +198,21 @@ impl PlayerActor {
         }
     }
 
-    /// Fire-and-forget: mirrors the current `current` + `queue` to the DB so
-    /// `restore_queue_on_restart` has something to reload. `save_queue_snapshot`
-    /// hashes its input and no-ops when nothing changed, so calling this after
-    /// every command (including ones that don't touch the queue) is cheap.
-    fn persist_queue_snapshot(&self) {
+    /// Fire-and-forget; no-ops when the hash is unchanged.
+    fn persist_queue_snapshot(&mut self) {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for t in self.state.current.iter().chain(self.state.queue.iter()) {
+            t.query.hash(&mut hasher);
+            t.title.hash(&mut hasher);
+            t.webpage_url.hash(&mut hasher);
+            t.requester_id.hash(&mut hasher);
+        }
+        let hash = hasher.finish();
+        if self.last_snapshot_hash == Some(hash) {
+            return;
+        }
+        self.last_snapshot_hash = Some(hash);
+
         let db = self.db.clone();
         let guild_id = self.guild_id.get();
         let mut queued: Vec<Track> = Vec::with_capacity(self.state.queue.len() + 1);
@@ -223,8 +236,7 @@ impl PlayerActor {
         });
     }
 
-    /// Fire-and-forget: records which channel this guild should reconnect to
-    /// on the next restart (`None` clears it, e.g. on an explicit `!leave`).
+    /// `None` clears it (e.g. on `!leave`).
     fn persist_last_voice_channel(&self, channel_id: Option<ChannelId>) {
         let db = self.db.clone();
         let guild_id = self.guild_id.get();

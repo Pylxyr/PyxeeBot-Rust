@@ -17,16 +17,9 @@ pub use ytdlp::{extract_args, search_args};
 pub struct Extractor {
     config: Arc<Config>,
     cache: ResolveCache,
-    /// Gates full per-video extractions (resolve_stream / extract_url) —
-    /// the CPU-heavy path (format resolution, JS-challenge solving), kept
-    /// tight (default 1) to avoid contention on a single-vCPU box.
+    /// Full per-video extraction: CPU-heavy, kept tight (default 1).
     extract_semaphore: Semaphore,
-    /// Gates `--flat-playlist` search listings (search / search_with_debug)
-    /// separately, sized by `ytdlp_curation_concurrency`. These are much
-    /// lighter than a full extraction, so they can run with more headroom
-    /// without starving the extract path — e.g. !vibe's sequential batch of
-    /// searches no longer queues behind the same single permit that also
-    /// gates the actual audio-stream resolve.
+    /// `--flat-playlist` search listings: lighter, separate budget.
     search_semaphore: Semaphore,
 }
 
@@ -43,12 +36,7 @@ impl Extractor {
         }
     }
 
-    /// Runs a `ytsearchN:` query (flat-playlist — listing metadata only, no
-    /// per-video extraction), scores results, and returns tracks best match
-    /// first. prime_cache is a no-op for these entries (no http_headers),
-    /// but stays in place for cases where a fully-extracted entry does flow
-    /// through here (e.g. a direct URL), so resolve_stream can still hit a
-    /// warm cache for those.
+    /// Flat-playlist search: metadata listing only, then ranks results.
     pub async fn search(
         &self,
         query: &str,
@@ -68,10 +56,7 @@ impl Extractor {
         Ok(tracks)
     }
 
-    /// Same as `search`, but also returns each track's score breakdown, and
-    /// takes an explicit result count instead of the config default — used
-    /// by `!search`/`!why`, which want more candidates to page through than
-    /// `!play`/`!vibe` want to pay the extraction cost for.
+    /// Same as `search` but returns score breakdowns and takes an explicit count.
     pub async fn search_with_debug(
         &self,
         query: &str,
@@ -105,13 +90,6 @@ impl Extractor {
         let mut tracks = Vec::with_capacity(entries.len());
         for item in &entries {
             let track = track_from_json(item, requester_id, url);
-            // With flat_playlist=false (the only way this is currently
-            // called), this is a full extraction (http_headers present), so
-            // this primes the cache and handle_play's speculative
-            // resolve_stream for this same track is a hit instead of a
-            // second full extract. If flat_playlist=true is ever used,
-            // prime_cache is already a safe no-op for those entries, same
-            // as it is for search()'s flat-playlist listings.
             self.prime_cache(&track.webpage_url, item).await;
             tracks.push(track);
         }
@@ -138,18 +116,8 @@ impl Extractor {
         Ok(info)
     }
 
-    /// Best-effort sibling of `resolve_stream`, for background prefetch
-    /// only: if the extract semaphore has no free permit *right now*, this
-    /// returns `None` immediately instead of queuing for one. Without this,
-    /// a low-priority prefetch (there's at most one in flight at a time,
-    /// per `YTDLP_PREFETCH_COUNT`) can end up occupying the sole
-    /// `YTDLP_CONCURRENT_EXTRACTS=1` permit's queue slot right as an urgent
-    /// on-demand `resolve_stream` call — e.g. from a `!skip` — needs it,
-    /// adding a full extraction's worth of avoidable latency to something
-    /// that's supposed to feel instant. A skipped prefetch isn't lost work:
-    /// the track just resolves on-demand later, exactly as if it had never
-    /// been prefetched. Cache hits still short-circuit as normal, since
-    /// those don't need a permit at all.
+    /// Non-blocking sibling of `resolve_stream` for prefetch: `None` if no
+    /// permit is free right now, instead of queuing behind urgent resolves.
     pub async fn try_resolve_stream(&self, track: &Track) -> Option<Result<ResolvedInfo>> {
         if let Some(cached) = self.cache.get(&track.webpage_url).await {
             return Some(Ok(cached));
@@ -177,18 +145,8 @@ impl Extractor {
         self.cache.invalidate(webpage_url).await;
     }
 
-    /// Best-effort: stash resolve info for an entry that's already been
-    /// fully extracted (e.g. as part of a non-flat search or extract_url
-    /// call), so a later `resolve_stream` call for the same `webpage_url`
-    /// is a cache hit instead of spawning yt-dlp again.
-    ///
-    /// Flat search entries (the normal case since `search_args` now uses
-    /// `--flat-playlist`) also carry a `url` key, but it's just a pointer
-    /// to the webpage — not a resolved stream — since flat mode skips
-    /// format resolution entirely. Treating that as a playable stream_url
-    /// would poison the cache with a non-audio URL. `http_headers` is only
-    /// ever present after a real format resolution, so its presence is used
-    /// here as the signal that this entry is safe to prime from.
+    /// Caches resolve info from an already-fully-extracted entry, if it has
+    /// one (flat-playlist entries don't and are skipped).
     async fn prime_cache(&self, webpage_url: &str, item: &Value) {
         if item.get("http_headers").is_none() {
             return;

@@ -203,12 +203,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
     client.start().await.map_err(Into::into)
 }
 
-/// Restart recovery: for every guild that has both a saved voice channel and
-/// a saved queue, reconnect and replay it — the first track naturally
-/// becomes "now playing" since a freshly-spawned player's queue starts
-/// empty, exactly like a fresh `!play`. Runs in the background so it never
-/// blocks the framework's `setup()` from returning; failures are logged and
-/// skipped per-guild rather than aborting the whole sweep.
+/// Reconnects and replays each guild's saved queue on startup.
 async fn restore_queues(data: Arc<BotData>) {
     let guilds = match data.db.list_restorable_guilds().await {
         Ok(g) => g,

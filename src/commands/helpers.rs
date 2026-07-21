@@ -49,14 +49,7 @@ pub async fn require_dj(ctx: Context<'_>) -> anyhow::Result<bool> {
     }
 }
 
-/// Restricts playback-control commands (skip/stop/pause/resume/previous/
-/// loop) to users actually in the bot's voice channel, so someone in an
-/// unrelated text or voice channel can't disrupt a session they're not
-/// part of. DJs are exempt, same as `require_dj` lets them act from
-/// anywhere. If the bot isn't connected to a channel at all, there's
-/// nothing to be "wrong" about, so this allows the action through (whatever
-/// the command does in that case, e.g. reporting nothing is playing, is
-/// its own concern).
+/// DJs and unconnected bots are exempt.
 pub async fn require_same_voice_channel(ctx: Context<'_>) -> anyhow::Result<bool> {
     if is_dj(ctx).await {
         return Ok(true);

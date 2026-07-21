@@ -115,11 +115,10 @@ pub fn tokenize_text(value: &str) -> Vec<String> {
 }
 
 fn word_boundary_match(p: &str, t: &str) -> bool {
-    let padded = format!(" {p} ");
-    p == t
-        || t.starts_with(format!("{p} ").as_str())
-        || t.ends_with(format!(" {p}").as_str())
-        || t.contains(padded.as_str())
+    if p == t || t.starts_with(&format!("{p} ")) || t.ends_with(&format!(" {p}")) {
+        return true;
+    }
+    t.contains(&format!(" {p} "))
 }
 
 pub fn signal_tokens(query: &str) -> Vec<String> {

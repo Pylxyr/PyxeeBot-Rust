@@ -219,9 +219,7 @@ impl Database {
         Ok(())
     }
 
-    /// Guilds worth attempting to restore on startup: a saved voice channel
-    /// *and* at least one queued track. `RESTORE_QUEUE_ON_RESTART` gates
-    /// whether this is ever called; this doesn't check the config itself.
+    /// Guilds with a saved voice channel and a saved queue.
     pub async fn list_restorable_guilds(&self) -> sqlx::Result<Vec<(u64, u64)>> {
         let rows: Vec<(i64, i64)> = sqlx::query_as::<_, (i64, i64)>(
             "SELECT gs.guild_id, gs.last_voice_channel_id

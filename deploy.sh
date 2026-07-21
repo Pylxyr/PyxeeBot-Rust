@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Manual fallback for release.yml's automated deploy (which runs on every
-# push to main). Kept in sync with it: same service name, same path.
+# Manual fallback for release.yml. Keep the service/path in sync with it.
 
 : "${SERVER_HOST:?Set SERVER_HOST to the Oracle instance address}"
 : "${SERVER_USER:?Set SERVER_USER (e.g. ubuntu)}"
