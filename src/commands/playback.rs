@@ -56,7 +56,8 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
     play_or_queue(ctx, query, false).await
 }
 
-
+/// Search and queue a track at the front of the queue, ahead of everything
+/// else (the current track keeps playing).
 #[poise::command(prefix_command, slash_command, guild_only, aliases("pn"))]
 pub async fn playnext(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     play_or_queue(ctx, query, true).await
@@ -119,7 +120,11 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
     let title = track.escaped_title();
     tracing::info!(guild_id = %guild_id, title = %track.title, url = %track.webpage_url, "!play: track selected, calling player.play");
     let play_start = std::time::Instant::now();
-    let result = player.play(track, front, channel_id).await;
+    let found_edit_fut = handle.edit(
+        ctx,
+        poise::CreateReply::default().content(format!("Found **{title}**, loading...")),
+    );
+    let (_, result) = tokio::join!(found_edit_fut, player.play(track, front, channel_id));
     tracing::info!(guild_id = %guild_id, elapsed = ?play_start.elapsed(), ok = result.is_ok(), "!play: player.play returned");
 
     match result {
