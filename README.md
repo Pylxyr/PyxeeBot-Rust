@@ -15,7 +15,6 @@
 ![tokio](https://img.shields.io/badge/tokio-1.52-blue)
 ![sqlx](https://img.shields.io/badge/sqlx-0.9-blue)
 
-*<sub>The build badge's `pylxyr/PyxeeBot-Rust` path is inferred (from `BOT_ACTIVITY_URL`'s default and this repo's folder name), not independently confirmed — fix the owner/repo in the URL if that's wrong.</sub>*
 
 </div>
 
