@@ -30,6 +30,8 @@ fn test_config() -> Config {
         ytdlp_search_results: 5,
         ytdlp_resolve_cache_size: 128,
         ytdlp_resolve_cache_ttl_secs: 1800,
+        ytdlp_search_cache_size: 200,
+        ytdlp_search_cache_ttl_secs: 600,
         ytdlp_extract_timeout_secs: 45,
         np_auto_refresh: false,
         np_auto_refresh_interval: 30,

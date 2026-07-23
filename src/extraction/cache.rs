@@ -48,3 +48,32 @@ impl ResolveCache {
         self.inner.invalidate(webpage_url).await;
     }
 }
+
+/// Caches raw flat-playlist search entries keyed by normalized query text.
+/// Ranking is cheap enough to redo per-call (microseconds for the result
+/// counts involved), so this only needs to cache the yt-dlp round trip
+/// itself, not any particular command's ranked/sliced view of it. A hit
+/// with more entries than needed is still valid — the caller just takes a
+/// prefix; a hit with fewer is treated as a miss.
+pub struct SearchCache {
+    inner: Cache<String, Vec<serde_json::Value>>,
+}
+
+impl SearchCache {
+    pub fn new(config: &Config) -> Self {
+        let inner = Cache::builder()
+            .max_capacity(config.ytdlp_search_cache_size)
+            .time_to_live(Duration::from_secs(config.ytdlp_search_cache_ttl_secs))
+            .build();
+        Self { inner }
+    }
+
+    pub async fn get(&self, key: &str, min_count: usize) -> Option<Vec<serde_json::Value>> {
+        let cached = self.inner.get(key).await?;
+        (cached.len() >= min_count).then_some(cached)
+    }
+
+    pub async fn insert(&self, key: String, entries: Vec<serde_json::Value>) {
+        self.inner.insert(key, entries).await;
+    }
+}

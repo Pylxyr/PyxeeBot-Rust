@@ -28,6 +28,8 @@ pub struct Config {
     pub ytdlp_search_results: usize,
     pub ytdlp_resolve_cache_size: u64,
     pub ytdlp_resolve_cache_ttl_secs: u64,
+    pub ytdlp_search_cache_size: u64,
+    pub ytdlp_search_cache_ttl_secs: u64,
     pub ytdlp_extract_timeout_secs: u64,
     pub np_auto_refresh: bool,
     pub np_auto_refresh_interval: u32,
@@ -138,6 +140,9 @@ impl Config {
             ytdlp_search_results: int_env("YTDLP_SEARCH_RESULTS", 5).clamp(1, 10) as usize,
             ytdlp_resolve_cache_size: int_env("YTDLP_RESOLVE_CACHE_SIZE", 128).max(16) as u64,
             ytdlp_resolve_cache_ttl_secs: int_env("YTDLP_RESOLVE_CACHE_TTL_SECONDS", 1800).max(60)
+                as u64,
+            ytdlp_search_cache_size: int_env("YTDLP_SEARCH_CACHE_SIZE", 200).max(16) as u64,
+            ytdlp_search_cache_ttl_secs: int_env("YTDLP_SEARCH_CACHE_TTL_SECONDS", 600).max(30)
                 as u64,
             ytdlp_extract_timeout_secs: int_env("YTDLP_EXTRACT_TIMEOUT_SECONDS", 45).max(5) as u64,
             np_auto_refresh: bool_env("NP_AUTO_REFRESH", false),

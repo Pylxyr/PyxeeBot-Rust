@@ -11,12 +11,13 @@ use crate::errors::{BotError, Result};
 use crate::models::Track;
 use crate::scoring;
 
-pub use cache::{ResolveCache, ResolvedInfo};
+pub use cache::{ResolveCache, ResolvedInfo, SearchCache};
 pub use ytdlp::{extract_args, search_args};
 
 pub struct Extractor {
     config: Arc<Config>,
     cache: ResolveCache,
+    search_cache: SearchCache,
     /// Full per-video extraction: CPU-heavy, kept tight (default 1).
     extract_semaphore: Semaphore,
     /// `--flat-playlist` search listings: lighter, separate budget.
@@ -26,11 +27,13 @@ pub struct Extractor {
 impl Extractor {
     pub fn new(config: Arc<Config>) -> Self {
         let cache = ResolveCache::new(&config);
+        let search_cache = SearchCache::new(&config);
         let extract_semaphore = Semaphore::new(config.ytdlp_concurrent_extracts);
         let search_semaphore = Semaphore::new(config.ytdlp_curation_concurrency);
         Self {
             config,
             cache,
+            search_cache,
             extract_semaphore,
             search_semaphore,
         }
@@ -44,8 +47,7 @@ impl Extractor {
         curation_mode: bool,
     ) -> Result<Vec<Track>> {
         let count = self.config.ytdlp_search_results.max(1);
-        let args = ytdlp::search_args(&self.config, query, count);
-        let entries = self.run_search(&args).await?;
+        let entries = self.search_entries(query, count).await?;
         let ranked = scoring::rank_entries(query, entries, curation_mode);
         let mut tracks = Vec::with_capacity(ranked.len());
         for (item, _) in &ranked {
@@ -65,8 +67,7 @@ impl Extractor {
         count: usize,
     ) -> Result<Vec<(Track, scoring::ScoreBreakdown)>> {
         let count = count.max(1);
-        let args = ytdlp::search_args(&self.config, query, count);
-        let entries = self.run_search(&args).await?;
+        let entries = self.search_entries(query, count).await?;
         let ranked = scoring::rank_entries(query, entries, curation_mode);
         let mut out = Vec::with_capacity(ranked.len());
         for (item, bd) in &ranked {
@@ -75,6 +76,20 @@ impl Extractor {
             out.push((track, bd.clone()));
         }
         Ok(out)
+    }
+
+    /// Cache-then-yt-dlp for a flat-playlist search. A cached entry with at
+    /// least `count` results satisfies the request regardless of which
+    /// command originally populated it.
+    async fn search_entries(&self, query: &str, count: usize) -> Result<Vec<Value>> {
+        let key = query.trim().to_lowercase();
+        if let Some(cached) = self.search_cache.get(&key, count).await {
+            return Ok(cached);
+        }
+        let args = ytdlp::search_args(&self.config, query, count);
+        let entries = self.run_search(&args).await?;
+        self.search_cache.insert(key, entries.clone()).await;
+        Ok(entries)
     }
 
     /// Extracts metadata for a direct URL (no search/ranking involved).
