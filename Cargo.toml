@@ -3,6 +3,7 @@ name        = "pyxeebot"
 version     = "0.1.0"
 edition     = "2021"
 description = "PyxeeBot — Discord music bot"
+license     = "MIT"
 
 [lib]
 name = "pyxeebot"
