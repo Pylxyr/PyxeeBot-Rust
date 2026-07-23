@@ -118,6 +118,14 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         }
     }
 
+    let _ = handle
+        .edit(
+            ctx,
+            poise::CreateReply::default()
+                .content(format!("Found {} candidates, adding to queue...", queries.len())),
+        )
+        .await;
+
     let mut queued = Vec::new();
     for (query, result) in search_results.into_iter().flatten() {
         match result {
