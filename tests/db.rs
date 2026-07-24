@@ -178,3 +178,30 @@ async fn play_history_and_top_played_and_top_requesters() {
     assert_eq!(requesters[0].requester_id, 10);
     assert_eq!(requesters[0].request_count, 2);
 }
+
+#[tokio::test]
+async fn restorable_guilds_need_both_a_channel_and_a_saved_queue() {
+    let db = temp_db().await;
+    assert!(db.list_restorable_guilds().await.unwrap().is_empty());
+
+    db.set_last_voice_channel(1, Some(999), "!").await.unwrap();
+    assert!(
+        db.list_restorable_guilds().await.unwrap().is_empty(),
+        "a channel with no saved queue shouldn't be restorable"
+    );
+
+    let entries = vec![QueueEntryRef {
+        query: "a",
+        title: "A",
+        webpage_url: "https://example.com/a",
+        requester_id: 7,
+    }];
+    db.save_queue_snapshot(1, &entries).await.unwrap();
+    assert_eq!(db.list_restorable_guilds().await.unwrap(), vec![(1, 999)]);
+
+    db.set_last_voice_channel(1, None, "!").await.unwrap();
+    assert!(
+        db.list_restorable_guilds().await.unwrap().is_empty(),
+        "clearing the channel should drop it from the restorable list even though the queue is still saved"
+    );
+}
