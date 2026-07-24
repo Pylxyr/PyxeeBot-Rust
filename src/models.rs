@@ -112,24 +112,3 @@ impl LoopMode {
         }
     }
 }
-
-/// Persisted queue state for restart recovery. `version` lets future formats
-/// be told apart from this one — the Python bot's snapshot format had no
-/// such field, which would have made a future format change a silent
-/// deserialization failure.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueSnapshot {
-    pub version: u32,
-    pub entries: Vec<Track>,
-}
-
-impl QueueSnapshot {
-    pub const CURRENT_VERSION: u32 = 1;
-
-    pub fn new(entries: Vec<Track>) -> Self {
-        Self {
-            version: Self::CURRENT_VERSION,
-            entries,
-        }
-    }
-}
