@@ -19,6 +19,7 @@ ssh "${SERVER_USER}@${SERVER_HOST}" '
   set -e
   mv ~/pyxeebotr/pyxeebot.new ~/pyxeebotr/pyxeebot
   chmod +x ~/pyxeebotr/pyxeebot
+  sudo systemctl reset-failed pyxeebotr
   sudo systemctl restart pyxeebotr
   sleep 2
   sudo systemctl is-active --quiet pyxeebotr && echo "pyxeebotr is running" || {
