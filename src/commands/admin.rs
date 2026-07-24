@@ -110,10 +110,13 @@ pub async fn setprefix(ctx: Context<'_>, prefix: String) -> anyhow::Result<()> {
 #[poise::command(prefix_command, slash_command)]
 pub async fn stats(ctx: Context<'_>) -> anyhow::Result<()> {
     let guild_count = ctx.serenity_context().cache.guild_count();
-    ctx.say(format!(
-        "Serving {guild_count} server(s). Prefix: `{}` (default).",
-        ctx.data().config.default_prefix
-    ))
-    .await?;
+    let data = ctx.data();
+    let prefix = match ctx.guild_id() {
+        Some(guild_id) => data.db.get_prefix(guild_id.get()).await,
+        None => None,
+    }
+    .unwrap_or_else(|| data.config.default_prefix.clone());
+    ctx.say(format!("Serving {guild_count} server(s). Prefix: `{prefix}`."))
+        .await?;
     Ok(())
 }
