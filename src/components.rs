@@ -100,6 +100,18 @@ pub fn search_page_count(total: usize) -> usize {
     total.div_ceil(SEARCH_PAGE_SIZE).clamp(1, SEARCH_MAX_PAGES)
 }
 
+/// Discord caps select-menu option labels at 25 characters — well short of
+/// most track titles, so this truncates rather than letting the option get
+/// rejected outright.
+fn truncate_label(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_owned();
+    }
+    let mut t: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    t.push('…');
+    t
+}
+
 /// Builds the select menu (current page's results only, values are absolute
 /// indices into the full result set) plus page-jump buttons when there's
 /// more than one page.
@@ -113,7 +125,9 @@ pub fn search_select_menu(
         .enumerate()
         .skip(start)
         .take(SEARCH_PAGE_SIZE)
-        .map(|(i, (t, _))| CreateSelectMenuOption::new(t.escaped_title(), i.to_string()))
+        .map(|(i, (t, _))| {
+            CreateSelectMenuOption::new(truncate_label(&t.escaped_title(), 25), i.to_string())
+        })
         .collect();
     let select_row = CreateActionRow::SelectMenu(CreateSelectMenu::new(
         SEARCH_PICK,
