@@ -98,7 +98,9 @@ impl GuildPlayer {
         self.send(PlayerCommand::Resume);
     }
 
-    pub async fn leave(&self) -> Result<()> {
+    /// `Ok(true)` if a call was actually left, `Ok(false)` if the bot
+    /// wasn't connected — not an error either way.
+    pub async fn leave(&self) -> Result<bool> {
         let (reply, rx) = oneshot::channel();
         self.send(PlayerCommand::Leave { reply });
         rx.await
