@@ -44,7 +44,8 @@ pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
     };
     let player = ctx.data().player_for(guild_id).await;
     match player.leave().await {
-        Ok(()) => ctx.say("Left the voice channel.").await?,
+        Ok(true) => ctx.say("Left the voice channel.").await?,
+        Ok(false) => ctx.say("Not currently in a voice channel.").await?,
         Err(e) => ctx.say(format!("Couldn't leave: {e}")).await?,
     };
     Ok(())
@@ -56,7 +57,7 @@ pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()>
     play_or_queue(ctx, query, false).await
 }
 
-
+/// Queue a track at the front of the queue.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("pn"))]
 pub async fn playnext(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     play_or_queue(ctx, query, true).await
