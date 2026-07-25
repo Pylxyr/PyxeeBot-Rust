@@ -32,10 +32,18 @@ pub async fn connect(
     result
 }
 
-pub async fn disconnect(songbird: &Songbird, guild_id: GuildId) -> Result<()> {
+/// Returns `Ok(true)` if a call was actually left, `Ok(false)` if there was
+/// nothing to leave — treated as success, not an error, since "not
+/// connected" already satisfies the caller's goal.
+pub async fn disconnect(songbird: &Songbird, guild_id: GuildId) -> Result<bool> {
+    if songbird.get(guild_id).is_none() {
+        tracing::info!(guild_id = %guild_id, "lifecycle::disconnect: nothing to leave");
+        return Ok(false);
+    }
     tracing::info!(guild_id = %guild_id, "lifecycle::disconnect: leaving");
     songbird
         .remove(guild_id)
         .await
-        .map_err(|e| BotError::Voice(e.to_string()))
+        .map_err(|e| BotError::Voice(e.to_string()))?;
+    Ok(true)
 }
