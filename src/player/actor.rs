@@ -42,7 +42,7 @@ pub enum PlayerCommand {
     Pause,
     Resume,
     Leave {
-        reply: oneshot::Sender<Result<()>>,
+        reply: oneshot::Sender<Result<bool>>,
     },
     Connect {
         channel_id: ChannelId,
@@ -512,6 +512,8 @@ impl PlayerActor {
             self.cancel_idle_timer();
             now_playing = self.advance_and_play().await?;
             failed = !now_playing;
+        } else {
+            self.spawn_prefetch();
         }
 
         tracing::info!(guild_id = %self.guild_id, now_playing, failed, "handle_play: done");
