@@ -93,6 +93,10 @@ pub enum PlayerCommand {
     IdleTimeout,
     EmptyTimeout,
     Shutdown,
+    ResolveDone {
+        generation: u64,
+        result: Result<crate::extraction::ResolvedInfo>,
+    },
 }
 
 struct TrackEndNotifier {
@@ -137,6 +141,7 @@ pub struct PlayerActor {
     paused_since: Option<std::time::Instant>,
     paused_total: std::time::Duration,
     last_snapshot_hash: Option<u64>,
+    retried_current_track: bool,
 }
 
 impl PlayerActor {
@@ -181,6 +186,7 @@ impl PlayerActor {
             paused_since: None,
             paused_total: std::time::Duration::ZERO,
             last_snapshot_hash: None,
+            retried_current_track: false,
         };
         tokio::spawn(actor.run());
         (tx, snapshot_rx)
@@ -290,6 +296,13 @@ impl PlayerActor {
             PlayerCommand::Skip => {
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
+                } else if self.state.current.is_some() {
+                    // Nothing actually playing yet — a resolve for the
+                    // current track is still in flight. Invalidate it and
+                    // move on ourselves, since there's no songbird handle
+                    // whose End/Error event would otherwise do it for us.
+                    self.current_generation += 1;
+                    self.discard_current_and_advance();
                 }
                 self.is_paused = false;
             }
@@ -297,6 +310,7 @@ impl PlayerActor {
                 self.state.clear();
                 self.state.current = None;
                 self.cancel_timers();
+                self.current_generation += 1;
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
                 }
@@ -457,6 +471,10 @@ impl PlayerActor {
             }
             PlayerCommand::Shutdown => {
                 self.cancel_timers();
+                let _ = lifecycle::disconnect(&self.songbird, self.guild_id).await;
+            }
+            PlayerCommand::ResolveDone { generation, result } => {
+                self.handle_resolve_done(generation, result).await;
             }
         }
     }
@@ -529,8 +547,15 @@ impl PlayerActor {
     /// The only difference is diagnostics and the requeue guard: an errored
     /// track is never requeued for loop mode, since a broken track looping
     /// forever would just fail on every replay.
+    ///
+    /// Both events are registered on every track and songbird fires both for
+    /// a single failure (Error, then End) — the generation check alone
+    /// doesn't catch the second one when advancing lands on an empty queue,
+    /// since nothing bumps current_generation in that case. current_handle
+    /// already being None is the signal that this generation's finish was
+    /// already handled.
     async fn handle_track_finished(&mut self, generation: u64, errored: bool) {
-        if generation != self.current_generation {
+        if generation != self.current_generation || self.current_handle.is_none() {
             return;
         }
         self.current_handle = None;
@@ -538,26 +563,138 @@ impl PlayerActor {
         let finished = self.state.current.clone();
         if errored {
             if let Some(t) = &finished {
-                tracing::warn!(guild_id = %self.guild_id, title = %t.title, "track errored during playback, skipping (not requeued)");
+                tracing::warn!(guild_id = %self.guild_id, title = %t.title, "track errored during playback");
             }
-        } else if let Some(finished) = finished.clone() {
-            self.state.requeue_finished(finished);
+            self.handle_resolve_failure().await;
+        } else {
+            if let Some(f) = finished.clone() {
+                self.state.requeue_finished(f);
+            }
+            self.advance_and_resolve_next();
         }
-        if let Err(e) = self.advance_and_play().await {
-            tracing::warn!(guild_id = %self.guild_id, error = %e, "failed to advance queue");
+        self.maybe_autoplay(finished).await;
+    }
+
+    /// A track failed — either its resolve came back an error, or it
+    /// resolved fine but songbird couldn't actually play the URL. Either
+    /// way `self.state.current` is still the failed track. Retries it once
+    /// with a fresh (cache-bypassing) resolve; on a second failure, gives up
+    /// on it without requeuing and moves to whatever's next.
+    async fn handle_resolve_failure(&mut self) {
+        if !self.retried_current_track {
+            self.retried_current_track = true;
+            if let Some(t) = self.state.current.clone() {
+                self.extractor.invalidate_stream(&t.webpage_url).await;
+                tracing::info!(guild_id = %self.guild_id, title = %t.title, "retrying once with a fresh resolve");
+                self.spawn_resolve_for_current();
+            }
+        } else {
+            tracing::warn!(guild_id = %self.guild_id, "already retried this track once, discarding and moving on");
+            self.discard_current_and_advance();
         }
-        if self.state.current.is_none() {
-            if self.state.autoplay {
-                if let Some(seed) = &finished {
-                    if let Err(e) = self.try_autoplay(seed).await {
-                        tracing::warn!(guild_id = %self.guild_id, error = %e, "autoplay failed");
-                    }
+    }
+
+    /// Autoplay only makes sense once the queue is genuinely empty — if
+    /// advancing (or a retry) already landed on something, there's nothing
+    /// to do here.
+    async fn maybe_autoplay(&mut self, seed: Option<Track>) {
+        if self.state.current.is_some() {
+            return;
+        }
+        if self.state.autoplay {
+            if let Some(seed) = &seed {
+                if let Err(e) = self.try_autoplay(seed).await {
+                    tracing::warn!(guild_id = %self.guild_id, error = %e, "autoplay failed");
                 }
             }
-            if self.state.current.is_none() && self.state.should_disconnect_when_idle() {
-                self.arm_idle_timer();
+        }
+        if self.state.current.is_none() && self.state.should_disconnect_when_idle() {
+            self.arm_idle_timer();
+        }
+    }
+
+    /// Pops the next track from the queue (the just-finished one already
+    /// went to history/requeue before this is called) and starts resolving
+    /// it in the background. Non-blocking — does not wait for the resolve.
+    fn advance_and_resolve_next(&mut self) {
+        self.retried_current_track = false;
+        if self.state.advance().is_some() {
+            self.spawn_resolve_for_current();
+        } else {
+            tracing::info!(guild_id = %self.guild_id, "queue exhausted, nothing playing");
+        }
+    }
+
+    /// Like `advance_and_resolve_next`, but for a track that's being given
+    /// up on without ever having played (failed twice, or skipped while its
+    /// resolve was still pending) — discarded outright, not sent to history
+    /// or requeued for loop mode.
+    fn discard_current_and_advance(&mut self) {
+        self.state.current = self.state.pop_front();
+        self.retried_current_track = false;
+        if self.state.current.is_some() {
+            self.spawn_resolve_for_current();
+        } else {
+            tracing::info!(guild_id = %self.guild_id, "queue exhausted, nothing playing");
+        }
+    }
+
+    /// Resolves `self.state.current` in the background and reports back via
+    /// `PlayerCommand::ResolveDone` instead of blocking the actor's command
+    /// loop — a resolve can legitimately take several seconds to tens of
+    /// seconds on this hardware, and the actor processes one command fully
+    /// before the next, so awaiting it inline would leave the guild's
+    /// player unresponsive to !skip/!stop for that whole window.
+    fn spawn_resolve_for_current(&mut self) {
+        let Some(track) = self.state.current.clone() else {
+            return;
+        };
+        self.cancel_idle_timer();
+        self.current_generation += 1;
+        let generation = self.current_generation;
+        let extractor = self.extractor.clone();
+        let self_tx = self.self_tx.clone();
+        let guild_id = self.guild_id;
+        let title = track.title.clone();
+        tracing::info!(%guild_id, %title, generation, "spawn_resolve_for_current: resolving in background");
+        tokio::spawn(async move {
+            let result = extractor.resolve_stream(&track).await;
+            let _ = self_tx.send(PlayerCommand::ResolveDone { generation, result });
+        });
+    }
+
+    /// Handles a background resolve finishing — starts playback on success,
+    /// otherwise routes into the same retry/give-up path as a post-playback
+    /// songbird error.
+    async fn handle_resolve_done(
+        &mut self,
+        generation: u64,
+        result: Result<crate::extraction::ResolvedInfo>,
+    ) {
+        if generation != self.current_generation {
+            return;
+        }
+        let Some(track) = self.state.current.clone() else {
+            return;
+        };
+        let seed = Some(track.clone());
+        match result {
+            Ok(resolved) => match self.finish_starting_track(track, resolved, generation).await {
+                Ok(()) => {
+                    self.spawn_prefetch();
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!(guild_id = %self.guild_id, error = %e, "handle_resolve_done: failed to start playback");
+                    self.handle_resolve_failure().await;
+                }
+            },
+            Err(e) => {
+                tracing::warn!(guild_id = %self.guild_id, error = %e, "handle_resolve_done: resolve failed");
+                self.handle_resolve_failure().await;
             }
         }
+        self.maybe_autoplay(seed).await;
     }
 
     /// Pulls the next track off the queue and plays it, skipping over any
@@ -569,6 +706,7 @@ impl PlayerActor {
             match self.state.advance() {
                 Some(track) => {
                     let title = track.title.clone();
+                    self.retried_current_track = false;
                     tracing::info!(guild_id = %self.guild_id, title = %title, "advance_and_play: trying track");
                     match self.play_track(track).await {
                         Ok(()) => {
@@ -680,6 +818,91 @@ impl PlayerActor {
         Ok(())
     }
 
+    /// The songbird hand-off half of playing a track, taking an
+    /// already-resolved `ResolvedInfo` — used by the background-resolve
+    /// path (`handle_resolve_done`) once a result comes back, so this part
+    /// mirrors `play_track`'s second half deliberately rather than sharing
+    /// code with it, to avoid touching the still-inline blocking path that
+    /// `!play`/`!previous` rely on for their reply.
+    async fn finish_starting_track(
+        &mut self,
+        track: Track,
+        resolved: crate::extraction::ResolvedInfo,
+        generation: u64,
+    ) -> Result<()> {
+        let Some(call) = self.call.clone() else {
+            tracing::warn!(guild_id = %self.guild_id, "finish_starting_track: no active voice call");
+            return Err(BotError::NotInVoiceChannel);
+        };
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in &resolved.headers {
+            let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {
+                tracing::warn!(guild_id = %self.guild_id, header = %name, "finish_starting_track: skipping header with invalid name from yt-dlp");
+                continue;
+            };
+            let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) else {
+                tracing::warn!(guild_id = %self.guild_id, header = %name, "finish_starting_track: skipping header with invalid value from yt-dlp");
+                continue;
+            };
+            headers.insert(header_name, header_value);
+        }
+        tracing::info!(
+            guild_id = %self.guild_id,
+            header_count = headers.len(),
+            content_length = ?resolved.content_length,
+            "finish_starting_track: built HttpRequest with headers/content_length from yt-dlp",
+        );
+
+        let input: Input = HttpRequest {
+            client: self.http_client.clone(),
+            request: resolved.stream_url,
+            headers,
+            content_length: resolved.content_length,
+        }
+        .into();
+        tracing::info!(guild_id = %self.guild_id, generation, "finish_starting_track: handing input to songbird");
+        let handle = {
+            let mut call_guard = call.lock().await;
+            call_guard.play_only_input(input)
+        };
+        let end_notifier = TrackEndNotifier {
+            tx: self.self_tx.clone(),
+            generation,
+            errored: false,
+        };
+        let _ = handle.add_event(Event::Track(TrackEvent::End), end_notifier);
+        let error_notifier = TrackEndNotifier {
+            tx: self.self_tx.clone(),
+            generation,
+            errored: true,
+        };
+        let _ = handle.add_event(Event::Track(TrackEvent::Error), error_notifier);
+
+        self.current_handle = Some(handle);
+        self.is_paused = false;
+        self.track_started_at = Some(std::time::Instant::now());
+        self.paused_since = None;
+        self.paused_total = std::time::Duration::ZERO;
+        tracing::info!(guild_id = %self.guild_id, title = %track.title, "finish_starting_track: playback started");
+
+        let db = self.db.clone();
+        let guild_id = self.guild_id.get();
+        let title = track.title.clone();
+        let webpage_url = track.webpage_url.clone();
+        let requester_id = track.requester_id;
+        tokio::spawn(async move {
+            if let Err(e) = db
+                .add_play_history(guild_id, &title, &webpage_url, requester_id)
+                .await
+            {
+                tracing::warn!(guild_id = guild_id, error = %e, "finish_starting_track: failed to record play history");
+            }
+        });
+
+        Ok(())
+    }
+
     /// Autoplay: finds an artist similar to the just-finished track via
     /// Last.fm, searches for a track by them, and plays it. A no-op if
     /// Last.fm isn't configured or nothing playable turns up — the caller
@@ -709,7 +932,7 @@ impl PlayerActor {
                 if let Some(track) = tracks.into_iter().next() {
                     tracing::info!(guild_id = %self.guild_id, artist = %artist, title = %track.title, "try_autoplay: queuing");
                     self.state.push_back(track);
-                    self.advance_and_play().await?;
+                    self.advance_and_resolve_next();
                     return Ok(());
                 }
             }
