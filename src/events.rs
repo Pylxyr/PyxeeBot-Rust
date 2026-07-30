@@ -25,11 +25,9 @@ pub async fn handle_event(
         } => {
             handle_component_interaction(ctx, data, component).await;
         }
-        FullEvent::GuildDelete { incomplete, .. } => {
-            if !incomplete.unavailable {
-                if let Some((_, player)) = data.players.remove(&incomplete.id) {
-                    player.shutdown();
-                }
+        FullEvent::GuildDelete { incomplete, .. } if !incomplete.unavailable => {
+            if let Some((_, player)) = data.players.remove(&incomplete.id) {
+                player.shutdown();
             }
         }
         _ => {}
