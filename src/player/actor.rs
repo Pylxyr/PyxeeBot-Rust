@@ -148,6 +148,16 @@ pub struct PlayerActor {
     paused_total: std::time::Duration,
     last_snapshot_hash: Option<u64>,
     retried_current_track: bool,
+    /// Generation `handle_track_finished` last actually processed (as
+    /// opposed to bailing out early on). Songbird fires both Error and End
+    /// for a single failure, and a plain generation check doesn't catch the
+    /// second one when advancing lands on an empty queue (nothing bumps
+    /// current_generation in that case) — this catches it instead.
+    /// current_handle can't be used for that: Skip clears it synchronously
+    /// before the matching TrackEnded even arrives, so treating "handle is
+    /// None" as "already handled" caused every skip-during-playback to
+    /// silently stop dead instead of advancing to the next track.
+    last_finished_generation: Option<u64>,
 }
 
 impl PlayerActor {
@@ -193,6 +203,7 @@ impl PlayerActor {
             paused_total: std::time::Duration::ZERO,
             last_snapshot_hash: None,
             retried_current_track: false,
+            last_finished_generation: None,
         };
         tokio::spawn(actor.run());
         (tx, snapshot_rx)
@@ -563,13 +574,18 @@ impl PlayerActor {
     /// Both events are registered on every track and songbird fires both for
     /// a single failure (Error, then End) — the generation check alone
     /// doesn't catch the second one when advancing lands on an empty queue,
-    /// since nothing bumps current_generation in that case. current_handle
-    /// already being None is the signal that this generation's finish was
-    /// already handled.
+    /// since nothing bumps current_generation in that case. `last_finished_generation`
+    /// is the dedup signal for that instead of `current_handle`: Skip clears
+    /// `current_handle` itself before the matching TrackEnded arrives, so
+    /// using its absence as the "already handled" signal made every skip
+    /// during playback stop dead instead of advancing.
     async fn handle_track_finished(&mut self, generation: u64, errored: bool) {
-        if generation != self.current_generation || self.current_handle.is_none() {
+        if generation != self.current_generation
+            || self.last_finished_generation == Some(generation)
+        {
             return;
         }
+        self.last_finished_generation = Some(generation);
         self.current_handle = None;
         self.is_paused = false;
         let finished = self.state.current.clone();
