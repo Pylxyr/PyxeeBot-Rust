@@ -1,42 +1,22 @@
-use poise::serenity_prelude::{Member, Permissions};
-
 use crate::bot::Context;
 
 /// DJ = has the configured DJ role, or Manage Channels, or is a bot owner.
 /// Mirrors the Python bot's `_require_dj` check.
 pub async fn is_dj(ctx: Context<'_>) -> bool {
-    let Some(member) = ctx.author_member().await else {
-        return false;
-    };
-    if has_manage_channels(ctx, &member) {
-        return true;
-    }
-    if ctx.framework().options().owners.contains(&ctx.author().id) {
-        return true;
-    }
     let Some(guild_id) = ctx.guild_id() else {
         return false;
     };
-    let Some(dj_role) = ctx.data().db.get_dj_role_id(guild_id.get()).await else {
-        return false;
-    };
-    member.roles.iter().any(|r| r.get() == dj_role)
-}
-
-fn has_manage_channels(ctx: Context<'_>, member: &Member) -> bool {
-    let Some(guild_id) = ctx.guild_id() else {
-        return false;
-    };
-    let channel_id = ctx.channel_id();
-    let Some(guild) = ctx.serenity_context().cache.guild(guild_id) else {
-        return false;
-    };
-    let Some(channel) = guild.channels.get(&channel_id) else {
-        return false;
-    };
-    guild
-        .user_permissions_in(channel, member)
-        .contains(Permissions::MANAGE_CHANNELS)
+    let member = ctx.author_member().await;
+    crate::permissions::is_dj(
+        &ctx.data().db,
+        &ctx.data().config.bot_owners,
+        &ctx.serenity_context().cache,
+        guild_id,
+        ctx.channel_id(),
+        ctx.author().id,
+        member.as_deref(),
+    )
+    .await
 }
 
 pub async fn require_dj(ctx: Context<'_>) -> anyhow::Result<bool> {
@@ -58,15 +38,12 @@ pub async fn require_same_voice_channel(ctx: Context<'_>) -> anyhow::Result<bool
         return Ok(true);
     };
     let bot_channel = ctx.data().player_for(guild_id).await.snapshot().channel_id;
-    let Some(bot_channel) = bot_channel else {
-        return Ok(true);
-    };
-    let user_channel = ctx
-        .serenity_context()
-        .cache
-        .guild(guild_id)
-        .and_then(|g| g.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id));
-    if user_channel == Some(bot_channel) {
+    if crate::permissions::in_same_voice_channel(
+        &ctx.serenity_context().cache,
+        guild_id,
+        bot_channel,
+        ctx.author().id,
+    ) {
         Ok(true)
     } else {
         ctx.say("You need to be in the same voice channel as the bot for this.")
