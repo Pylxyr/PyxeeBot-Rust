@@ -2,13 +2,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poise::serenity_prelude::{
-    self as serenity, ComponentInteraction, CreateInteractionResponse, EditInteractionResponse,
-    FullEvent, Interaction,
+    self as serenity, ComponentInteraction, CreateInteractionResponse,
+    CreateInteractionResponseMessage, EditInteractionResponse, FullEvent, Interaction,
 };
 use poise::FrameworkContext;
 
 use crate::bot::BotData;
 use crate::components;
+use crate::player::GuildPlayer;
 
 pub async fn handle_event(
     ctx: &serenity::Context,
@@ -50,6 +51,22 @@ async fn handle_component_interaction(
             let Some(player) = data.players.get(&guild_id).map(|p| p.clone()) else {
                 return;
             };
+            if !has_np_button_permission(ctx, data, guild_id, interaction, &player).await {
+                let _ = interaction
+                    .create_response(
+                        ctx,
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content(
+                                    "You need to be in the same voice channel as the bot, \
+                                     or have the DJ role, for this.",
+                                )
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await;
+                return;
+            }
             match custom_id {
                 components::NP_PAUSE => {
                     if player.snapshot().is_paused {
@@ -77,6 +94,35 @@ async fn handle_component_interaction(
         }
         _ => {}
     }
+}
+
+/// Same rule `require_same_voice_channel` enforces for `!skip`/`!pause`/
+/// `!loop` — the buttons on the Now Playing message are visible to anyone
+/// in the text channel, not just people in the voice call, so they need
+/// the same gate or they'd bypass it entirely.
+async fn has_np_button_permission(
+    ctx: &serenity::Context,
+    data: &Arc<BotData>,
+    guild_id: serenity::GuildId,
+    interaction: &ComponentInteraction,
+    player: &GuildPlayer,
+) -> bool {
+    let user_id = interaction.user.id;
+    let is_dj = crate::permissions::is_dj(
+        &data.db,
+        &data.config.bot_owners,
+        &ctx.cache,
+        guild_id,
+        interaction.channel_id,
+        user_id,
+        interaction.member.as_ref(),
+    )
+    .await;
+    if is_dj {
+        return true;
+    }
+    let bot_channel = player.snapshot().channel_id;
+    crate::permissions::in_same_voice_channel(&ctx.cache, guild_id, bot_channel, user_id)
 }
 
 async fn handle_search_pick(
@@ -187,7 +233,7 @@ async fn handle_voice_state_update(
     let bot_id = ctx.cache.current_user().id;
 
     if new.user_id == bot_id {
-        if new.channel_id.is_none() {
+        let Some(new_channel) = new.channel_id else {
             // Force-kicked (or a clean !leave, which is harmless to re-check
             // here since stay_connected will be false in that case). This is
             // the exact regression fix from the Python bug hunt: only try to
@@ -210,6 +256,16 @@ async fn handle_voice_state_update(
                     }
                 }
             });
+            return;
+        };
+
+        // Still connected somewhere — if it's a different channel than we
+        // had stored (e.g. a mod dragged the bot), sync our own state to
+        // match. Songbird already followed the move; we're just catching up.
+        if old.and_then(|o| o.channel_id) != Some(new_channel) {
+            if let Some(player) = data.players.get(&guild_id).map(|p| p.clone()) {
+                player.sync_channel(new_channel);
+            }
         }
         return;
     }
