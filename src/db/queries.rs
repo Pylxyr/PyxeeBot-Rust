@@ -60,13 +60,19 @@ impl Database {
         if let Some(cached) = self.prefix_cache.get(&guild_id) {
             return cached.clone();
         }
-        let row: Option<(String,)> =
-            sqlx::query_as::<_, (String,)>("SELECT prefix FROM guild_settings WHERE guild_id = ?")
-                .bind(guild_id as i64)
-                .fetch_optional(&self.pool)
-                .await
-                .ok()
-                .flatten();
+        let row = match sqlx::query_as::<_, (String,)>(
+            "SELECT prefix FROM guild_settings WHERE guild_id = ?",
+        )
+        .bind(guild_id as i64)
+        .fetch_optional(&self.pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::warn!(guild_id, error = %e, "get_prefix query failed, using default");
+                return None;
+            }
+        };
         let prefix = row.map(|(p,)| p);
         self.prefix_cache.insert(guild_id, prefix.clone());
         prefix
@@ -89,14 +95,19 @@ impl Database {
         if let Some(cached) = self.dj_role_cache.get(&guild_id) {
             return *cached;
         }
-        let row: Option<(Option<i64>,)> = sqlx::query_as::<_, (Option<i64>,)>(
+        let row = match sqlx::query_as::<_, (Option<i64>,)>(
             "SELECT dj_role_id FROM guild_settings WHERE guild_id = ?",
         )
         .bind(guild_id as i64)
         .fetch_optional(&self.pool)
         .await
-        .ok()
-        .flatten();
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::warn!(guild_id, error = %e, "get_dj_role_id query failed, using default");
+                return None;
+            }
+        };
         let role_id = row.and_then(|(r,)| r).map(|r| r as u64);
         self.dj_role_cache.insert(guild_id, role_id);
         role_id
@@ -128,14 +139,19 @@ impl Database {
         if let Some(cached) = self.stay_connected_cache.get(&guild_id) {
             return *cached;
         }
-        let row: Option<(i64,)> = sqlx::query_as::<_, (i64,)>(
+        let row = match sqlx::query_as::<_, (i64,)>(
             "SELECT stay_connected FROM guild_settings WHERE guild_id = ?",
         )
         .bind(guild_id as i64)
         .fetch_optional(&self.pool)
         .await
-        .ok()
-        .flatten();
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::warn!(guild_id, error = %e, "get_stay_connected query failed, using default");
+                return false;
+            }
+        };
         let value = row.is_some_and(|(v,)| v != 0);
         self.stay_connected_cache.insert(guild_id, value);
         value
@@ -167,13 +183,19 @@ impl Database {
         if let Some(cached) = self.autoplay_cache.get(&guild_id) {
             return *cached;
         }
-        let row: Option<(i64,)> =
-            sqlx::query_as::<_, (i64,)>("SELECT autoplay FROM guild_settings WHERE guild_id = ?")
-                .bind(guild_id as i64)
-                .fetch_optional(&self.pool)
-                .await
-                .ok()
-                .flatten();
+        let row = match sqlx::query_as::<_, (i64,)>(
+            "SELECT autoplay FROM guild_settings WHERE guild_id = ?",
+        )
+        .bind(guild_id as i64)
+        .fetch_optional(&self.pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::warn!(guild_id, error = %e, "get_autoplay query failed, using default");
+                return false;
+            }
+        };
         let value = row.is_some_and(|(v,)| v != 0);
         self.autoplay_cache.insert(guild_id, value);
         value
@@ -308,6 +330,17 @@ impl Database {
         .bind(name)
         .fetch_all(&self.pool)
         .await
+    }
+
+    pub async fn get_playlist_owner(&self, guild_id: u64, name: &str) -> sqlx::Result<Option<u64>> {
+        let row: Option<(i64,)> = sqlx::query_as::<_, (i64,)>(
+            "SELECT created_by FROM saved_playlists WHERE guild_id = ? AND name = ?",
+        )
+        .bind(guild_id as i64)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(c,)| c as u64))
     }
 
     pub async fn delete_playlist(&self, guild_id: u64, name: &str) -> sqlx::Result<bool> {
