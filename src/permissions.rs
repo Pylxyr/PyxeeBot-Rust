@@ -2,11 +2,8 @@ use poise::serenity_prelude::{Cache, ChannelId, GuildId, Member, Permissions, Us
 
 use crate::db::Database;
 
-/// DJ = has the configured DJ role, or Manage Channels, or is a bot owner.
-///
-/// Shared between prefix/slash commands (`commands/helpers.rs`) and the
-/// Now Playing message buttons (`events.rs`) so both surfaces enforce the
-/// exact same rule and can't drift out of sync.
+/// DJ = configured DJ role, Manage Channels, or bot owner. Shared by
+/// commands/helpers.rs and events.rs so both enforce the same rule.
 pub async fn is_dj(
     db: &Database,
     bot_owners: &[u64],
@@ -42,8 +39,7 @@ fn has_manage_channels(cache: &Cache, guild_id: GuildId, channel_id: ChannelId, 
         .contains(Permissions::MANAGE_CHANNELS)
 }
 
-/// Whether `user_id` is in the same voice channel the bot is connected to.
-/// `true` when the bot isn't connected anywhere — nothing to protect yet.
+/// True if the bot isn't connected anywhere.
 pub fn in_same_voice_channel(
     cache: &Cache,
     guild_id: GuildId,

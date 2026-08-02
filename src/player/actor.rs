@@ -74,11 +74,8 @@ pub enum PlayerCommand {
     Rejoin {
         channel_id: ChannelId,
     },
-    /// The bot's voice state changed to a new channel without going through
-    /// Connect/Rejoin — e.g. a mod dragged it to another channel. Songbird's
-    /// connection already followed the move; this just updates our own idea
-    /// of where we are, so later channel_id comparisons (empty-channel
-    /// checks, `!play` from the "wrong" channel) don't act on stale data.
+    /// Voice state moved to a new channel without disconnecting (e.g. a
+    /// mod dragged us) — songbird already followed it, this just syncs.
     SyncChannel(ChannelId),
     /// Fired by the songbird EventHandler when a track ends normally,
     /// carrying the generation number it was registered under. If that no
@@ -148,15 +145,9 @@ pub struct PlayerActor {
     paused_total: std::time::Duration,
     last_snapshot_hash: Option<u64>,
     retried_current_track: bool,
-    /// Generation `handle_track_finished` last actually processed (as
-    /// opposed to bailing out early on). Songbird fires both Error and End
-    /// for a single failure, and a plain generation check doesn't catch the
-    /// second one when advancing lands on an empty queue (nothing bumps
-    /// current_generation in that case) — this catches it instead.
-    /// current_handle can't be used for that: Skip clears it synchronously
-    /// before the matching TrackEnded even arrives, so treating "handle is
-    /// None" as "already handled" caused every skip-during-playback to
-    /// silently stop dead instead of advancing to the next track.
+    /// Generation `handle_track_finished` last processed — dedups
+    /// songbird's paired Error+End fire without relying on current_handle
+    /// (Skip clears that itself, before TrackEnded arrives).
     last_finished_generation: Option<u64>,
 }
 
@@ -565,20 +556,12 @@ impl PlayerActor {
         })
     }
 
-    /// Shared by TrackEnded and TrackErrored — songbird fires End even when
-    /// a track errored, so the queue-advance logic is identical either way.
-    /// The only difference is diagnostics and the requeue guard: an errored
-    /// track is never requeued for loop mode, since a broken track looping
-    /// forever would just fail on every replay.
+    /// Shared by TrackEnded and TrackErrored. An errored track isn't
+    /// requeued for loop mode, since it would just fail again.
     ///
-    /// Both events are registered on every track and songbird fires both for
-    /// a single failure (Error, then End) — the generation check alone
-    /// doesn't catch the second one when advancing lands on an empty queue,
-    /// since nothing bumps current_generation in that case. `last_finished_generation`
-    /// is the dedup signal for that instead of `current_handle`: Skip clears
-    /// `current_handle` itself before the matching TrackEnded arrives, so
-    /// using its absence as the "already handled" signal made every skip
-    /// during playback stop dead instead of advancing.
+    /// `last_finished_generation` dedups songbird's paired Error+End fire
+    /// instead of `current_handle`, which Skip clears before TrackEnded
+    /// arrives.
     async fn handle_track_finished(&mut self, generation: u64, errored: bool) {
         if generation != self.current_generation
             || self.last_finished_generation == Some(generation)

@@ -96,10 +96,8 @@ async fn handle_component_interaction(
     }
 }
 
-/// Same rule `require_same_voice_channel` enforces for `!skip`/`!pause`/
-/// `!loop` — the buttons on the Now Playing message are visible to anyone
-/// in the text channel, not just people in the voice call, so they need
-/// the same gate or they'd bypass it entirely.
+/// Same check `require_same_voice_channel` uses for text commands — the
+/// buttons need it too or they bypass it entirely.
 async fn has_np_button_permission(
     ctx: &serenity::Context,
     data: &Arc<BotData>,
@@ -259,9 +257,8 @@ async fn handle_voice_state_update(
             return;
         };
 
-        // Still connected somewhere — if it's a different channel than we
-        // had stored (e.g. a mod dragged the bot), sync our own state to
-        // match. Songbird already followed the move; we're just catching up.
+        // Channel changed without disconnecting (e.g. dragged by a mod) —
+        // sync our state; songbird already followed the move.
         if old.and_then(|o| o.channel_id) != Some(new_channel) {
             if let Some(player) = data.players.get(&guild_id).map(|p| p.clone()) {
                 player.sync_channel(new_channel);
