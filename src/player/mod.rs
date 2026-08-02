@@ -168,6 +168,12 @@ impl GuildPlayer {
         self.send(PlayerCommand::Rejoin { channel_id });
     }
 
+    /// Tells the actor its voice channel changed without a Connect/Rejoin
+    /// (e.g. dragged to another channel by a mod).
+    pub fn sync_channel(&self, channel_id: ChannelId) {
+        self.send(PlayerCommand::SyncChannel(channel_id));
+    }
+
     pub fn shutdown(&self) {
         self.send(PlayerCommand::Shutdown);
     }
