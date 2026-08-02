@@ -74,6 +74,12 @@ pub enum PlayerCommand {
     Rejoin {
         channel_id: ChannelId,
     },
+    /// The bot's voice state changed to a new channel without going through
+    /// Connect/Rejoin — e.g. a mod dragged it to another channel. Songbird's
+    /// connection already followed the move; this just updates our own idea
+    /// of where we are, so later channel_id comparisons (empty-channel
+    /// checks, `!play` from the "wrong" channel) don't act on stale data.
+    SyncChannel(ChannelId),
     /// Fired by the songbird EventHandler when a track ends normally,
     /// carrying the generation number it was registered under. If that no
     /// longer matches `current_generation`, this track was already
@@ -419,6 +425,12 @@ impl PlayerActor {
                     Err(e) => {
                         tracing::warn!(guild_id = %self.guild_id, error = %e, "rejoin failed");
                     }
+                }
+            }
+            PlayerCommand::SyncChannel(channel_id) => {
+                if self.channel_id != Some(channel_id) {
+                    self.channel_id = Some(channel_id);
+                    self.persist_last_voice_channel(Some(channel_id));
                 }
             }
             PlayerCommand::TrackEnded(generation) => {
