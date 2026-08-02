@@ -163,6 +163,22 @@ pub async fn delete(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    let owner = ctx
+        .data()
+        .db
+        .get_playlist_owner(guild_id.get(), &name)
+        .await?;
+    let Some(owner) = owner else {
+        ctx.say(format!("No playlist named `{name}` found."))
+            .await?;
+        return Ok(());
+    };
+    let is_owner = owner == ctx.author().id.get();
+    if !is_owner && !super::helpers::is_dj(ctx).await {
+        ctx.say("Only the playlist's creator or a DJ can delete it.")
+            .await?;
+        return Ok(());
+    }
     let deleted = ctx.data().db.delete_playlist(guild_id.get(), &name).await?;
     if deleted {
         ctx.say(format!("Deleted playlist `{name}`.")).await?;
