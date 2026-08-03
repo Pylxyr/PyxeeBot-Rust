@@ -476,6 +476,7 @@ impl PlayerActor {
                 // The exact regression fix from the Python bug hunt: honour
                 // stay_connected before disconnecting on an empty channel.
                 if self.state.should_disconnect_when_empty(false) {
+                    self.resolve_pending_play(false, false);
                     if let Some(handle) = self.current_handle.take() {
                         let _ = handle.stop();
                     }
