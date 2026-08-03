@@ -149,6 +149,9 @@ pub struct PlayerActor {
     /// songbird's paired Error+End fire without relying on current_handle
     /// (Skip clears that itself, before TrackEnded arrives).
     last_finished_generation: Option<u64>,
+    /// Reply channel for a `!play` into an empty queue, waiting on the
+    /// track's background resolve. See handle_play/resolve_pending_play.
+    pending_play_reply: Option<(oneshot::Sender<Result<PlayOutcome>>, usize)>,
 }
 
 impl PlayerActor {
@@ -195,6 +198,7 @@ impl PlayerActor {
             last_snapshot_hash: None,
             retried_current_track: false,
             last_finished_generation: None,
+            pending_play_reply: None,
         };
         tokio::spawn(actor.run());
         (tx, snapshot_rx)
@@ -298,10 +302,10 @@ impl PlayerActor {
                 channel_id,
                 reply,
             } => {
-                let result = self.handle_play(track, front, channel_id).await;
-                let _ = reply.send(result);
+                self.handle_play(track, front, channel_id, reply).await;
             }
             PlayerCommand::Skip => {
+                self.resolve_pending_play(false, false);
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
                 } else if self.state.current.is_some() {
@@ -315,6 +319,7 @@ impl PlayerActor {
                 self.is_paused = false;
             }
             PlayerCommand::Stop => {
+                self.resolve_pending_play(false, false);
                 self.state.clear();
                 self.state.current = None;
                 self.cancel_timers();
@@ -344,6 +349,7 @@ impl PlayerActor {
                 }
             }
             PlayerCommand::Leave { reply } => {
+                self.resolve_pending_play(false, false);
                 self.cancel_timers();
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
@@ -498,22 +504,31 @@ impl PlayerActor {
         track: Track,
         front: bool,
         channel_id: ChannelId,
-    ) -> Result<PlayOutcome> {
+        reply: oneshot::Sender<Result<PlayOutcome>>,
+    ) {
         tracing::info!(guild_id = %self.guild_id, title = %track.title, front, "handle_play: received");
 
         if self.call.is_none() || self.channel_id != Some(channel_id) {
             tracing::info!(guild_id = %self.guild_id, channel_id = %channel_id, "handle_play: connecting to voice channel");
             let connect_start = std::time::Instant::now();
-            // Speculative: connect doesn't need the resolved stream, and
-            // resolve_stream caches on success, so play_track's later call
-            // for this same track becomes a cache hit instead of a second
-            // extraction. Errors here are ignored — play_track's real call
-            // still runs and surfaces any genuine failure.
-            let connect_fut = lifecycle::connect(&self.songbird, self.guild_id, channel_id);
-            let prefetch_fut = self.extractor.resolve_stream(&track);
-            let (call, _) = tokio::join!(connect_fut, prefetch_fut);
-            let call = call?;
-            tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect + speculative resolve finished");
+            // Speculative cache warm, fired and forgotten — the background
+            // resolve below will hit cache once this lands. Not joined with
+            // connect: that's yt-dlp time on the actor's own command loop,
+            // which is exactly what blocked other commands for this guild
+            // during a guild's first !play.
+            let extractor = self.extractor.clone();
+            let speculative = track.clone();
+            tokio::spawn(async move {
+                let _ = extractor.resolve_stream(&speculative).await;
+            });
+            let call = match lifecycle::connect(&self.songbird, self.guild_id, channel_id).await {
+                Ok(call) => call,
+                Err(e) => {
+                    let _ = reply.send(Err(e));
+                    return;
+                }
+            };
+            tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect finished");
             self.call = Some(call);
             self.channel_id = Some(channel_id);
             self.persist_last_voice_channel(Some(channel_id));
@@ -521,14 +536,16 @@ impl PlayerActor {
 
         if self.state.is_full() {
             tracing::warn!(guild_id = %self.guild_id, "handle_play: queue is full");
-            return Err(BotError::QueueFull);
+            let _ = reply.send(Err(BotError::QueueFull));
+            return;
         }
 
         if self.config.max_queue_size_per_user > 0
             && self.state.user_queue_count(track.requester_id) >= self.config.max_queue_size_per_user
         {
             tracing::info!(guild_id = %self.guild_id, requester_id = track.requester_id, "handle_play: per-user queue cap reached");
-            return Err(BotError::UserQueueFull);
+            let _ = reply.send(Err(BotError::UserQueueFull));
+            return;
         }
 
         if front {
@@ -536,24 +553,44 @@ impl PlayerActor {
         } else {
             self.state.push_back(track);
         }
+        let position = if front { 1 } else { self.state.queue.len() };
 
-        let mut now_playing = false;
-        let mut failed = false;
         if self.state.current.is_none() {
             tracing::info!(guild_id = %self.guild_id, "handle_play: nothing currently playing, advancing queue");
             self.cancel_idle_timer();
-            now_playing = self.advance_and_play().await?;
-            failed = !now_playing;
+            self.retried_current_track = false;
+            if self.state.advance().is_some() {
+                self.pending_play_reply = Some((reply, position));
+                self.spawn_resolve_for_current();
+            } else {
+                let _ = reply.send(Ok(PlayOutcome {
+                    position,
+                    now_playing: false,
+                    failed: true,
+                }));
+            }
         } else {
             self.spawn_prefetch();
+            let _ = reply.send(Ok(PlayOutcome {
+                position,
+                now_playing: false,
+                failed: false,
+            }));
         }
 
-        tracing::info!(guild_id = %self.guild_id, now_playing, failed, "handle_play: done");
-        Ok(PlayOutcome {
-            position: if front { 1 } else { self.state.queue.len() },
-            now_playing,
-            failed,
-        })
+        tracing::info!(guild_id = %self.guild_id, "handle_play: done");
+    }
+
+    /// Answers a `!play` that's waiting on the first track's background
+    /// resolve, if one is pending. No-op otherwise.
+    fn resolve_pending_play(&mut self, now_playing: bool, failed: bool) {
+        if let Some((reply, position)) = self.pending_play_reply.take() {
+            let _ = reply.send(Ok(PlayOutcome {
+                position,
+                now_playing,
+                failed,
+            }));
+        }
     }
 
     /// Shared by TrackEnded and TrackErrored. An errored track isn't
@@ -647,6 +684,7 @@ impl PlayerActor {
             self.spawn_resolve_for_current();
         } else {
             tracing::info!(guild_id = %self.guild_id, "queue exhausted, nothing playing");
+            self.resolve_pending_play(false, true);
         }
     }
 
@@ -692,6 +730,7 @@ impl PlayerActor {
         match result {
             Ok(resolved) => match self.finish_starting_track(track, resolved, generation).await {
                 Ok(()) => {
+                    self.resolve_pending_play(true, false);
                     self.spawn_prefetch();
                     return;
                 }
@@ -706,37 +745,6 @@ impl PlayerActor {
             }
         }
         self.maybe_autoplay(seed).await;
-    }
-
-    /// Pulls the next track off the queue and plays it, skipping over any
-    /// track that fails to resolve (e.g. a dead link) rather than getting
-    /// stuck. Returns true if something actually started playing, false if
-    /// the queue was exhausted without success.
-    async fn advance_and_play(&mut self) -> Result<bool> {
-        loop {
-            match self.state.advance() {
-                Some(track) => {
-                    let title = track.title.clone();
-                    self.retried_current_track = false;
-                    tracing::info!(guild_id = %self.guild_id, title = %title, "advance_and_play: trying track");
-                    match self.play_track(track).await {
-                        Ok(()) => {
-                            tracing::info!(guild_id = %self.guild_id, title = %title, "advance_and_play: playing");
-                            self.spawn_prefetch();
-                            return Ok(true);
-                        }
-                        Err(e) => {
-                            tracing::warn!(guild_id = %self.guild_id, title = %title, error = %e, "advance_and_play: failed to play track, skipping");
-                            continue;
-                        }
-                    }
-                }
-                None => {
-                    tracing::info!(guild_id = %self.guild_id, "advance_and_play: queue exhausted, nothing playing");
-                    return Ok(false);
-                }
-            }
-        }
     }
 
     async fn play_track(&mut self, track: Track) -> Result<()> {
