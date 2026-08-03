@@ -90,12 +90,16 @@ impl GuildPlayer {
         self.send(PlayerCommand::Stop);
     }
 
-    pub fn pause(&self) {
-        self.send(PlayerCommand::Pause);
+    pub async fn pause(&self) {
+        let (reply, rx) = oneshot::channel();
+        self.send(PlayerCommand::Pause { reply });
+        let _ = rx.await;
     }
 
-    pub fn resume(&self) {
-        self.send(PlayerCommand::Resume);
+    pub async fn resume(&self) {
+        let (reply, rx) = oneshot::channel();
+        self.send(PlayerCommand::Resume { reply });
+        let _ = rx.await;
     }
 
     /// `Ok(true)` if a call was actually left, `Ok(false)` if the bot

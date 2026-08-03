@@ -39,8 +39,12 @@ pub enum PlayerCommand {
     },
     Skip,
     Stop,
-    Pause,
-    Resume,
+    Pause {
+        reply: oneshot::Sender<()>,
+    },
+    Resume {
+        reply: oneshot::Sender<()>,
+    },
     Leave {
         reply: oneshot::Sender<Result<bool>>,
     },
@@ -334,14 +338,16 @@ impl PlayerActor {
                 self.paused_since = None;
                 self.arm_idle_timer();
             }
-            PlayerCommand::Pause => {
+            PlayerCommand::Pause { reply } => {
                 if let Some(handle) = &self.current_handle {
                     let _ = handle.pause();
                     self.is_paused = true;
                     self.paused_since = Some(std::time::Instant::now());
                 }
+                self.publish_snapshot();
+                let _ = reply.send(());
             }
-            PlayerCommand::Resume => {
+            PlayerCommand::Resume { reply } => {
                 if let Some(handle) = &self.current_handle {
                     let _ = handle.play();
                     self.is_paused = false;
@@ -349,6 +355,8 @@ impl PlayerActor {
                         self.paused_total += since.elapsed();
                     }
                 }
+                self.publish_snapshot();
+                let _ = reply.send(());
             }
             PlayerCommand::Leave { reply } => {
                 self.resolve_pending_play(false, false);

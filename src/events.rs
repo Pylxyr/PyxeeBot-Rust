@@ -70,9 +70,9 @@ async fn handle_component_interaction(
             match custom_id {
                 components::NP_PAUSE => {
                     if player.snapshot().is_paused {
-                        player.resume();
+                        player.resume().await;
                     } else {
-                        player.pause();
+                        player.pause().await;
                     }
                 }
                 components::NP_SKIP => player.skip(),
@@ -87,6 +87,12 @@ async fn handle_component_interaction(
             let _ = interaction
                 .create_response(ctx, components::update_response(content, buttons))
                 .await;
+        }
+        components::NP_CLOSE => {
+            let _ = interaction
+                .create_response(ctx, CreateInteractionResponse::Acknowledge)
+                .await;
+            let _ = interaction.message.delete(ctx).await;
         }
         components::SEARCH_PICK => handle_search_pick(ctx, data, interaction, guild_id).await,
         id if id.starts_with(components::SEARCH_PAGE_PREFIX) => {

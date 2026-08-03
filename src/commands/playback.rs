@@ -206,7 +206,7 @@ pub async fn pause(ctx: Context<'_>) -> anyhow::Result<()> {
     if !super::helpers::require_same_voice_channel(ctx).await? {
         return Ok(());
     }
-    ctx.data().player_for(guild_id).await.pause();
+    ctx.data().player_for(guild_id).await.pause().await;
     ctx.say("Paused.").await?;
     Ok(())
 }
@@ -220,7 +220,7 @@ pub async fn resume(ctx: Context<'_>) -> anyhow::Result<()> {
     if !super::helpers::require_same_voice_channel(ctx).await? {
         return Ok(());
     }
-    ctx.data().player_for(guild_id).await.resume();
+    ctx.data().player_for(guild_id).await.resume().await;
     ctx.say("Resumed.").await?;
     Ok(())
 }

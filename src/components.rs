@@ -11,6 +11,7 @@ use crate::scoring::ScoreBreakdown;
 pub const NP_PAUSE: &str = "np:pause";
 pub const NP_SKIP: &str = "np:skip";
 pub const NP_LOOP: &str = "np:loop";
+pub const NP_CLOSE: &str = "np:close";
 pub const SEARCH_PICK: &str = "search:pick";
 pub const SEARCH_PAGE_PREFIX: &str = "search:page:";
 pub const SEARCH_PAGE_SIZE: usize = 5;
@@ -55,6 +56,9 @@ pub fn now_playing_buttons(snapshot: &PlayerSnapshot) -> Vec<CreateActionRow> {
         CreateButton::new(NP_LOOP)
             .label("Loop")
             .style(ButtonStyle::Secondary),
+        CreateButton::new(NP_CLOSE)
+            .label("Close")
+            .style(ButtonStyle::Danger),
     ])]
 }
 
