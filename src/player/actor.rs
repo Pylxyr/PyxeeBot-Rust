@@ -8,7 +8,7 @@ use songbird::input::{HttpRequest, Input};
 use songbird::tracks::TrackHandle;
 use songbird::{Call, Songbird};
 use tokio::sync::{mpsc, oneshot, watch, Mutex as AsyncMutex};
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::config::Config;
 use crate::db::Database;
@@ -152,6 +152,7 @@ pub struct PlayerActor {
     /// Reply channel for a `!play` into an empty queue, waiting on the
     /// track's background resolve. See handle_play/resolve_pending_play.
     pending_play_reply: Option<(oneshot::Sender<Result<PlayOutcome>>, usize)>,
+    prefetch_task: Option<AbortHandle>,
 }
 
 impl PlayerActor {
@@ -199,6 +200,7 @@ impl PlayerActor {
             retried_current_track: false,
             last_finished_generation: None,
             pending_play_reply: None,
+            prefetch_task: None,
         };
         tokio::spawn(actor.run());
         (tx, snapshot_rx)
@@ -967,16 +969,27 @@ impl PlayerActor {
     }
 
     /// Resolves the next `ytdlp_prefetch_count` queued tracks in the
-    /// background as soon as the current one starts, so by the time the
-    /// queue advances to them, `resolve_stream` is a cache hit instead of
-    /// a fresh ~10s yt-dlp extraction. Fire-and-forget: failures here just
-    /// mean the eventual real resolve pays the normal cost.
-    fn spawn_prefetch(&self) {
+    /// background, one at a time, so by the time the queue advances to
+    /// them, `resolve_stream` is a cache hit instead of a fresh ~10s
+    /// yt-dlp extraction. Sequential, not concurrent: running these in
+    /// parallel measurably slows each individual extraction down on a
+    /// single-core box instead of speeding the batch up, and competes
+    /// with live Opus encoding for the same core. A fresh call cancels
+    /// whatever prefetch was still in flight, so reordering the queue
+    /// re-prioritizes immediately instead of queuing behind stale work.
+    fn spawn_prefetch(&mut self) {
+        if let Some(handle) = self.prefetch_task.take() {
+            handle.abort();
+        }
         let count = self.config.ytdlp_prefetch_count;
-        for track in self.state.queue.iter().take(count).cloned() {
-            let extractor = self.extractor.clone();
-            let guild_id = self.guild_id;
-            tokio::spawn(async move {
+        if count == 0 {
+            return;
+        }
+        let tracks: Vec<Track> = self.state.queue.iter().take(count).cloned().collect();
+        let extractor = self.extractor.clone();
+        let guild_id = self.guild_id;
+        let join_handle = tokio::spawn(async move {
+            for track in tracks {
                 let title = track.title.clone();
                 match extractor.try_resolve_stream(&track).await {
                     Some(Ok(_)) => tracing::info!(%guild_id, %title, "spawn_prefetch: resolved"),
@@ -987,8 +1000,9 @@ impl PlayerActor {
                         tracing::debug!(%guild_id, %title, "spawn_prefetch: skipped, extractor busy — will resolve on-demand instead")
                     }
                 }
-            });
-        }
+            }
+        });
+        self.prefetch_task = Some(join_handle.abort_handle());
     }
 
     fn arm_idle_timer(&mut self) {
