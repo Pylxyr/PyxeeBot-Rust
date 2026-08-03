@@ -3,6 +3,9 @@ use crate::bot::Context;
 /// Sliding window size for per-guild !vibe song history — see vibe_history
 /// on BotData.
 const VIBE_HISTORY_CAP: usize = 50;
+/// How many similar tracks/artists to ask Last.fm for. Kept modest since
+/// each candidate costs one sequential yt-dlp search (~5-15s on this box).
+const VIBE_CANDIDATE_COUNT: usize = 4;
 
 /// Normalizes a query string into a dedup key so "Zutomayo Saturn" and
 /// "zutomayo  saturn" count as the same song.
@@ -45,7 +48,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     let mut queries: Vec<String> = Vec::new();
     if let Ok(Some((resolved_artist, resolved_track))) = lastfm.resolve_track(&artist).await {
         if let Ok(similar) = lastfm
-            .similar_tracks(&resolved_artist, &resolved_track, 6)
+            .similar_tracks(&resolved_artist, &resolved_track, VIBE_CANDIDATE_COUNT)
             .await
         {
             queries = similar
@@ -56,7 +59,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     }
 
     if queries.is_empty() {
-        queries = match lastfm.similar_artists(&artist, 6).await {
+        queries = match lastfm.similar_artists(&artist, VIBE_CANDIDATE_COUNT).await {
             Ok(a) if !a.is_empty() => a,
             Ok(_) => {
                 let _ = handle
@@ -103,51 +106,24 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
 
     let player = data.player_for(guild_id).await;
 
-    let mut search_tasks = tokio::task::JoinSet::new();
-    for (idx, query) in queries.iter().cloned().enumerate() {
-        let extractor = data.extractor.clone();
-        search_tasks.spawn(async move {
-            let result = extractor.search(&query, author_id, true).await;
-            (idx, query, result)
-        });
-    }
-    let mut search_results: Vec<_> = (0..queries.len()).map(|_| None).collect();
-    while let Some(joined) = search_tasks.join_next().await {
-        if let Ok((idx, query, result)) = joined {
-            search_results[idx] = Some((query, result));
-        }
-    }
-
-    let _ = handle
-        .edit(
-            ctx,
-            poise::CreateReply::default()
-                .content(format!("Found {} candidates, adding to queue...", queries.len())),
-        )
-        .await;
-
     let mut queued = Vec::new();
-    for (query, result) in search_results.into_iter().flatten() {
-        match result {
-            Ok(tracks) if !tracks.is_empty() => {
-                let track = tracks.into_iter().next().unwrap();
-                let title = track.escaped_title();
-                if player
-                    .play(track, false, channel_id)
-                    .await
-                    .is_ok_and(|o| !o.failed)
-                {
-                    queued.push(title);
-                    let mut history = data.vibe_history.entry(guild_id).or_default();
-                    let key = vibe_history_key(&query);
-                    history.retain(|k| k != &key);
-                    history.push_back(key);
-                    while history.len() > VIBE_HISTORY_CAP {
-                        history.pop_front();
-                    }
-                }
+    for query in &queries {
+        let Ok(tracks) = data.extractor.search(query, author_id, true).await else {
+            continue;
+        };
+        let Some(track) = tracks.into_iter().next() else {
+            continue;
+        };
+        let title = track.escaped_title();
+        if player.play(track, false, channel_id).await.is_ok_and(|o| !o.failed) {
+            queued.push(title);
+            let mut history = data.vibe_history.entry(guild_id).or_default();
+            let key = vibe_history_key(query);
+            history.retain(|k| k != &key);
+            history.push_back(key);
+            while history.len() > VIBE_HISTORY_CAP {
+                history.pop_front();
             }
-            _ => continue,
         }
     }
 
