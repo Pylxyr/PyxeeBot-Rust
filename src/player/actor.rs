@@ -412,13 +412,18 @@ impl PlayerActor {
             }
             PlayerCommand::Shuffle => {
                 self.state.shuffle();
+                self.spawn_prefetch();
             }
             PlayerCommand::RemoveTrack { position, reply } => {
                 let removed = self.state.remove(position);
+                self.spawn_prefetch();
                 let _ = reply.send(removed);
             }
             PlayerCommand::MoveTrack { from, to, reply } => {
                 let ok = self.state.move_track(from, to);
+                if ok {
+                    self.spawn_prefetch();
+                }
                 let _ = reply.send(ok);
             }
             PlayerCommand::Rejoin { channel_id } => {
