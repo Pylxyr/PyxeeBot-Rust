@@ -120,10 +120,16 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
     let title = track.escaped_title();
     tracing::info!(guild_id = %guild_id, title = %track.title, url = %track.webpage_url, "!play: track selected, calling player.play");
     let play_start = std::time::Instant::now();
-    let found_edit_fut = handle.edit(
-        ctx,
-        poise::CreateReply::default().content(format!("Found **{title}**, loading...")),
-    );
+    let needs_connect = {
+        let snapshot = player.snapshot();
+        !snapshot.is_connected || snapshot.channel_id != Some(channel_id)
+    };
+    let status = if needs_connect {
+        format!("Found **{title}** — connecting + resolving...")
+    } else {
+        format!("Found **{title}**, loading...")
+    };
+    let found_edit_fut = handle.edit(ctx, poise::CreateReply::default().content(status));
     let (_, result) = tokio::join!(found_edit_fut, player.play(track, front, channel_id));
     tracing::info!(guild_id = %guild_id, elapsed = ?play_start.elapsed(), ok = result.is_ok(), "!play: player.play returned");
 
