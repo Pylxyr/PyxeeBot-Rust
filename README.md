@@ -43,7 +43,7 @@ A Rust rewrite of the original Python PyxeeBot, built for a self-hosted Oracle C
 
 | Category | Commands |
 |---|---|
-| **Playback** | `join`, `leave`, `play` *(resolves a pasted URL directly, not just search terms)*, `playnext` *(queue at the front, ahead of everything else)*, `skip`, `stop`, `pause`, `resume`, `previous`, `loop`, `nowplaying` *(Pause/Skip/Loop buttons, optional auto-refreshing message — see `NP_AUTO_REFRESH`)* |
+| **Playback** | `join`, `leave`, `play` *(resolves a pasted URL directly, not just search terms)*, `playnext` *(queue at the front, ahead of everything else)*, `skip`, `stop`, `pause`, `resume`, `previous`, `loop`, `nowplaying` *(Pause/Skip/Loop/Close buttons, optional auto-refreshing message — see `NP_AUTO_REFRESH`)* |
 | **Queue** | `queue`, `clear`, `shuffle`, `move`, `remove`, `history`, `toptracks`, `toprequestors` |
 | **Search** | `search` *(select-menu to pick a result directly)*, `why` *(explains a search result's score breakdown)* |
 | **Playlists** | `playlist save`, `playlist load`, `playlist list`, `playlist show`, `playlist delete` |
@@ -56,7 +56,10 @@ A Rust rewrite of the original Python PyxeeBot, built for a self-hosted Oracle C
 |---|---|
 | `clear`, `shuffle`, `move` | DJ role or Manage Channels |
 | `remove` | The track's requester, or a DJ |
+| `playlist delete` | The playlist's creator, or a DJ |
 | `skip`, `stop`, `pause`, `resume`, `previous`, `loop` | Same voice channel as the bot (DJs exempt) |
+
+The Now Playing message's Pause/Skip/Loop buttons enforce the identical checks as their text-command equivalents. Close is unrestricted — dismissing the message doesn't touch playback, so anyone can hide it.
 
 ---
 
@@ -76,10 +79,11 @@ A Rust rewrite of the original Python PyxeeBot, built for a self-hosted Oracle C
 A handful of things are specifically tuned to get audio playing as fast as possible:
 
 - `!play` overlaps the "Searching..." reply with the actual search, instead of sending it first and waiting.
-- Connecting to voice and speculatively resolving the picked track's stream run concurrently (`tokio::join!`) instead of back-to-back.
+- The picked track's stream is speculatively resolved in the background the moment voice-connect starts, rather than waiting for connect to finish first.
 - A pasted URL's extraction result primes the resolve cache, so the speculative resolve above is a hit instead of a redundant second full extraction.
-- Background prefetch of upcoming tracks never queues for the single extract permit — if it's busy, prefetch just skips that round rather than sitting in front of an urgent on-demand resolve (e.g. from `!skip`).
-- `!vibe`'s searches run concurrently instead of one at a time (queueing still happens sequentially, to preserve result order).
+- Starting the very first track into an empty queue no longer blocks the guild's actor — it resolves in the background through the same path every other track advance uses, so a `!skip`/`!stop`/second `!play` issued in that window stays responsive instead of queueing behind it.
+- Background prefetch resolves upcoming tracks one at a time, not concurrently — measured on a single-vCPU box, running several extractions in parallel slows each one down rather than speeding the batch up. A fresh prefetch call (from `!move`, `!shuffle`, `!remove`, or a new track starting) cancels whatever prefetch was still in flight, so reordering the queue re-prioritizes immediately instead of waiting behind stale work.
+- `!vibe` searches and queues one candidate at a time for the same reason — concurrent yt-dlp calls measured 2-3x slower each under contention, not faster in aggregate, and each track queues the moment its own search resolves rather than waiting for the slowest of a batch.
 - The queue snapshot persisted for `restore_queue_on_restart` is hashed before cloning, so an unchanged queue costs a hash compare instead of a full clone on every command.
 - Repeat search queries across `!play`/`!vibe`/`!search` hit a raw-results cache instead of re-running yt-dlp, shared across all three regardless of which one populated it.
 
