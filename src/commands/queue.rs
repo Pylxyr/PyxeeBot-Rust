@@ -17,17 +17,19 @@ pub async fn queue(ctx: Context<'_>) -> anyhow::Result<()> {
     let mut lines = Vec::new();
     if let Some(current) = &snapshot.current {
         lines.push(format!(
-            "**Now playing:** {} ({})",
+            "**Now playing:** {} ({}) — requested by <@{}>",
             current.escaped_title(),
-            current.duration_label()
+            current.duration_label(),
+            current.requester_id
         ));
     }
     for (i, track) in snapshot.queue.iter().take(15).enumerate() {
         lines.push(format!(
-            "`{}.` {} ({})",
+            "`{}.` {} ({}) — <@{}>",
             i + 1,
             track.escaped_title(),
-            track.duration_label()
+            track.duration_label(),
+            track.requester_id
         ));
     }
     if snapshot.queue.len() > 15 {
