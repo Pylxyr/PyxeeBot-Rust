@@ -205,3 +205,49 @@ pub async fn toprequestors(ctx: Context<'_>) -> anyhow::Result<()> {
     ctx.say(lines.join("\n")).await?;
     Ok(())
 }
+
+/// Show a user's listening stats in this server (defaults to yourself).
+#[poise::command(prefix_command, slash_command, guild_only)]
+pub async fn mystats(
+    ctx: Context<'_>,
+    user: Option<poise::serenity_prelude::UserId>,
+) -> anyhow::Result<()> {
+    let Some(guild_id) = ctx.guild_id() else {
+        return Ok(());
+    };
+    let target = user.unwrap_or(ctx.author().id);
+    let stats = ctx
+        .data()
+        .db
+        .get_user_stats(guild_id.get(), target.get())
+        .await?;
+    if stats.play_count == 0 {
+        ctx.say(format!("<@{target}> hasn't played anything here yet."))
+            .await?;
+        return Ok(());
+    }
+    let top = ctx
+        .data()
+        .db
+        .get_user_top_tracks(guild_id.get(), target.get(), 5)
+        .await?;
+    let minutes = stats.total_seconds / 60;
+    let mut lines = vec![format!(
+        "**<@{target}>** — {} track(s) played, ~{minutes} minute(s) of listening.",
+        stats.play_count
+    )];
+    if !top.is_empty() {
+        lines.push(String::new());
+        lines.push("Top tracks:".to_owned());
+        for (i, t) in top.iter().enumerate() {
+            lines.push(format!(
+                "`{}.` {} — {} play(s)",
+                i + 1,
+                crate::models::escape_markdown(&t.title),
+                t.play_count
+            ));
+        }
+    }
+    ctx.say(lines.join("\n")).await?;
+    Ok(())
+}
