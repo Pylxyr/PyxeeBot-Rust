@@ -8,6 +8,7 @@ pub mod errors;
 pub mod events;
 pub mod extraction;
 pub mod lastfm;
+pub mod lyrics;
 pub mod models;
 pub mod permissions;
 pub mod player;
