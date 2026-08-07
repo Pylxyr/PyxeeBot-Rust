@@ -42,6 +42,7 @@ impl GuildPlayer {
         db: Arc<Database>,
         stay_connected: bool,
         autoplay: bool,
+        volume: u8,
     ) -> Arc<Self> {
         let (tx, snapshot_rx) = PlayerActor::spawn(
             guild_id,
@@ -53,6 +54,7 @@ impl GuildPlayer {
             db,
             stay_connected,
             autoplay,
+            volume,
         );
         Arc::new(Self { tx, snapshot_rx })
     }
@@ -99,6 +101,12 @@ impl GuildPlayer {
     pub async fn resume(&self) {
         let (reply, rx) = oneshot::channel();
         self.send(PlayerCommand::Resume { reply });
+        let _ = rx.await;
+    }
+
+    pub async fn set_volume(&self, volume: u8) {
+        let (reply, rx) = oneshot::channel();
+        self.send(PlayerCommand::SetVolume { volume, reply });
         let _ = rx.await;
     }
 
