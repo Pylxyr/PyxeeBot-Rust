@@ -12,7 +12,16 @@ use crate::errors::{BotError, Result};
 
 /// Builds the yt-dlp argument list for extracting metadata (no download).
 /// A pure function so it's testable without ever spawning a process.
-pub fn extract_args(config: &Config, query_or_url: &str, flat_playlist: bool) -> Vec<String> {
+/// `client_override` picks a specific YouTube player client (e.g. "android")
+/// instead of yt-dlp's default — used to retry with a different client when
+/// the first extraction attempt fails, since some bot-detection failures
+/// are specific to one client and clear up with another.
+pub fn extract_args(
+    config: &Config,
+    query_or_url: &str,
+    flat_playlist: bool,
+    client_override: Option<&str>,
+) -> Vec<String> {
     let mut args = vec![
         "--dump-json".to_owned(),
         "--no-warnings".to_owned(),
@@ -31,10 +40,19 @@ pub fn extract_args(config: &Config, query_or_url: &str, flat_playlist: bool) ->
     }
     args.push("--cache-dir".to_owned());
     args.push(config.ytdlp_cache_dir.display().to_string());
+
+    let mut youtube_args = Vec::new();
     if let Some(js_runtime) = &config.ytdlp_js_runtime_path {
-        args.push("--extractor-args".to_owned());
-        args.push(format!("youtube:jsi={js_runtime}"));
+        youtube_args.push(format!("jsi={js_runtime}"));
     }
+    if let Some(client) = client_override {
+        youtube_args.push(format!("player_client={client}"));
+    }
+    if !youtube_args.is_empty() {
+        args.push("--extractor-args".to_owned());
+        args.push(format!("youtube:{}", youtube_args.join(";")));
+    }
+
     if let Some(base_url) = &config.ytdlp_pot_provider_base_url {
         args.push("--extractor-args".to_owned());
         args.push(format!("youtubepot-bgutilhttp:base_url={base_url}"));
@@ -52,7 +70,39 @@ pub fn extract_args(config: &Config, query_or_url: &str, flat_playlist: bool) ->
 /// bot's `extract_flat=True` search behaviour, which already does this.
 pub fn search_args(config: &Config, query: &str, count: usize) -> Vec<String> {
     let search_target = format!("ytsearch{count}:{query}");
-    extract_args(config, &search_target, true)
+    extract_args(config, &search_target, true, None)
+}
+
+/// Lists every entry of an actual playlist URL. Deliberately not built on
+/// `extract_args`: that always passes `--no-playlist`, which is exactly what
+/// stops a playlist link from expanding — needed there so a video URL that
+/// incidentally carries a `list=` param (autoplay mixes do this constantly)
+/// still plays just that one video. This is only called once the caller has
+/// already decided the URL is a playlist page, not a single video.
+pub fn extract_playlist_args(config: &Config, playlist_url: &str) -> Vec<String> {
+    let mut args = vec![
+        "--dump-json".to_owned(),
+        "--no-warnings".to_owned(),
+        "--flat-playlist".to_owned(),
+        "--socket-timeout".to_owned(),
+        config.ytdlp_socket_timeout.to_string(),
+    ];
+    if let Some(cookies) = &config.ytdlp_cookies_file {
+        args.push("--cookies".to_owned());
+        args.push(cookies.display().to_string());
+    }
+    args.push("--cache-dir".to_owned());
+    args.push(config.ytdlp_cache_dir.display().to_string());
+    if let Some(js_runtime) = &config.ytdlp_js_runtime_path {
+        args.push("--extractor-args".to_owned());
+        args.push(format!("youtube:jsi={js_runtime}"));
+    }
+    if let Some(base_url) = &config.ytdlp_pot_provider_base_url {
+        args.push("--extractor-args".to_owned());
+        args.push(format!("youtubepot-bgutilhttp:base_url={base_url}"));
+    }
+    args.push(playlist_url.to_owned());
+    args
 }
 
 /// Runs yt-dlp with the given arguments and parses each stdout line as a JSON
