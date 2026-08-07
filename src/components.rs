@@ -1,7 +1,7 @@
 use poise::serenity_prelude::{
     ButtonStyle, ComponentInteraction, ComponentInteractionDataKind, CreateActionRow, CreateButton,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu,
-    CreateSelectMenuKind, CreateSelectMenuOption,
+    CreateEmbed, CreateEmbedAuthor, CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption,
 };
 
 use crate::models::Track;
@@ -17,24 +17,46 @@ pub const SEARCH_PAGE_PREFIX: &str = "search:page:";
 pub const SEARCH_PAGE_SIZE: usize = 5;
 pub const SEARCH_MAX_PAGES: usize = 3;
 
-pub fn now_playing_content(snapshot: &PlayerSnapshot) -> String {
-    match &snapshot.current {
-        Some(track) => {
-            let state = if snapshot.is_paused {
-                "Paused"
-            } else {
-                "Now playing"
-            };
-            format!(
-                "{state}: **{}** ({}) — requested by <@{}>\nLoop: {}",
-                track.escaped_title(),
-                track.duration_label(),
-                track.requester_id,
-                snapshot.loop_mode.label(),
-            )
-        }
-        None => "Nothing is playing right now.".to_owned(),
+/// PyxeeBot's brand orange, matching the website.
+const BRAND_COLOR: u32 = 0xF0_A8_68;
+
+pub fn now_playing_embed(snapshot: &PlayerSnapshot) -> CreateEmbed {
+    let Some(track) = &snapshot.current else {
+        return CreateEmbed::new()
+            .description("Nothing is playing right now.")
+            .color(BRAND_COLOR);
+    };
+    let state = if snapshot.is_paused {
+        "Paused"
+    } else {
+        "Now Playing"
+    };
+    let mut embed = CreateEmbed::new()
+        .author(CreateEmbedAuthor::new(state))
+        .title(track.escaped_title())
+        .url(&track.webpage_url)
+        .color(BRAND_COLOR)
+        .description(format!(
+            "{} · requested by <@{}> · Loop: {}",
+            track.duration_label(),
+            track.requester_id,
+            snapshot.loop_mode.label(),
+        ));
+    if !track.thumbnail_url.is_empty() {
+        embed = embed.thumbnail(track.thumbnail_url.clone());
     }
+    if !snapshot.queue.is_empty() {
+        let up_next = snapshot
+            .queue
+            .iter()
+            .take(2)
+            .enumerate()
+            .map(|(i, t)| format!("`{}.` {} ({})", i + 1, t.escaped_title(), t.duration_label()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        embed = embed.field("Up next", up_next, false);
+    }
+    embed
 }
 
 pub fn now_playing_buttons(snapshot: &PlayerSnapshot) -> Vec<CreateActionRow> {
@@ -167,6 +189,21 @@ pub fn update_response(
     CreateInteractionResponse::UpdateMessage(
         CreateInteractionResponseMessage::new()
             .content(content.into())
+            .components(components),
+    )
+}
+
+/// Same as `update_response`, but for the embed-based Now Playing message.
+/// Clears any leftover plain-text content explicitly, since messages
+/// created before this embed existed still have it set.
+pub fn update_response_embed(
+    embed: CreateEmbed,
+    components: Vec<CreateActionRow>,
+) -> CreateInteractionResponse {
+    CreateInteractionResponse::UpdateMessage(
+        CreateInteractionResponseMessage::new()
+            .content("")
+            .embed(embed)
             .components(components),
     )
 }
