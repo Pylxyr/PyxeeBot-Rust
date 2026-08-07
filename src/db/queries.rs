@@ -42,6 +42,12 @@ pub struct TopRequester {
     pub request_count: i64,
 }
 
+#[derive(Debug)]
+pub struct UserStats {
+    pub play_count: i64,
+    pub total_seconds: i64,
+}
+
 /// Minimal fields a caller needs to persist a queue entry (playlist item or
 /// snapshot row) — deliberately not the full `Track`, since only these four
 /// fields round-trip through storage.
@@ -217,6 +223,50 @@ impl Database {
         .execute(&self.pool)
         .await?;
         self.autoplay_cache.insert(guild_id, enabled);
+        self.prefix_cache
+            .entry(guild_id)
+            .or_insert_with(|| Some(default_prefix.to_owned()));
+        Ok(())
+    }
+
+    pub async fn get_volume(&self, guild_id: u64) -> u8 {
+        if let Some(cached) = self.volume_cache.get(&guild_id) {
+            return *cached;
+        }
+        let row = match sqlx::query_as::<_, (i64,)>(
+            "SELECT volume FROM guild_settings WHERE guild_id = ?",
+        )
+        .bind(guild_id as i64)
+        .fetch_optional(&self.pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::warn!(guild_id, error = %e, "get_volume query failed, using default");
+                return 100;
+            }
+        };
+        let value = row.map(|(v,)| v.clamp(0, 200) as u8).unwrap_or(100);
+        self.volume_cache.insert(guild_id, value);
+        value
+    }
+
+    pub async fn set_volume(
+        &self,
+        guild_id: u64,
+        volume: u8,
+        default_prefix: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO guild_settings (guild_id, prefix, volume) VALUES (?, ?, ?)
+             ON CONFLICT(guild_id) DO UPDATE SET volume = excluded.volume",
+        )
+        .bind(guild_id as i64)
+        .bind(default_prefix)
+        .bind(volume as i64)
+        .execute(&self.pool)
+        .await?;
+        self.volume_cache.insert(guild_id, volume);
         self.prefix_cache
             .entry(guild_id)
             .or_insert_with(|| Some(default_prefix.to_owned()));
@@ -444,17 +494,19 @@ impl Database {
         title: &str,
         webpage_url: &str,
         requester_id: u64,
+        duration: i64,
     ) -> sqlx::Result<()> {
         let count = self.next_write_count();
 
         sqlx::query(
-            "INSERT INTO play_history (guild_id, title, webpage_url, requester_id)
-             VALUES (?, ?, ?, ?)",
+            "INSERT INTO play_history (guild_id, title, webpage_url, requester_id, duration)
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(guild_id as i64)
         .bind(title)
         .bind(webpage_url)
         .bind(requester_id as i64)
+        .bind(duration)
         .execute(&self.pool)
         .await?;
 
@@ -509,6 +561,41 @@ impl Database {
              LIMIT ?",
         )
         .bind(guild_id as i64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn get_user_stats(&self, guild_id: u64, user_id: u64) -> sqlx::Result<UserStats> {
+        let row = sqlx::query_as::<_, (i64, i64)>(
+            "SELECT COUNT(*), COALESCE(SUM(duration), 0)
+             FROM play_history WHERE guild_id = ? AND requester_id = ?",
+        )
+        .bind(guild_id as i64)
+        .bind(user_id as i64)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(UserStats {
+            play_count: row.0,
+            total_seconds: row.1,
+        })
+    }
+
+    pub async fn get_user_top_tracks(
+        &self,
+        guild_id: u64,
+        user_id: u64,
+        limit: i64,
+    ) -> sqlx::Result<Vec<TopPlayed>> {
+        sqlx::query_as::<_, TopPlayed>(
+            "SELECT title, webpage_url, COUNT(*) AS play_count
+             FROM play_history WHERE guild_id = ? AND requester_id = ?
+             GROUP BY webpage_url
+             ORDER BY play_count DESC, MAX(played_at) DESC
+             LIMIT ?",
+        )
+        .bind(guild_id as i64)
+        .bind(user_id as i64)
         .bind(limit)
         .fetch_all(&self.pool)
         .await
