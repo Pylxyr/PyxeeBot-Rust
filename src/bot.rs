@@ -25,6 +25,7 @@ pub struct BotData {
     pub songbird: Arc<Songbird>,
     pub extractor: Arc<Extractor>,
     pub lastfm: Option<LastFmClient>,
+    pub lyrics: crate::lyrics::LyricsClient,
     pub http_client: reqwest::Client,
     pub players: DashMap<serenity::GuildId, Arc<GuildPlayer>>,
     /// Last search's ranked results + score breakdowns per guild, for `!why`.
@@ -32,6 +33,10 @@ pub struct BotData {
     /// Recently `!vibe`-queued song keys per guild, oldest-first, capped at
     /// VIBE_HISTORY_CAP — lets vibe favour songs it hasn't just played.
     pub vibe_history: DashMap<serenity::GuildId, std::collections::VecDeque<String>>,
+    /// Vote-skip tallies per guild: the track URL votes are for (so a track
+    /// change resets them) plus who's voted. Command-layer only — the actor
+    /// has no Discord cache access to count listeners itself.
+    pub skip_votes: DashMap<serenity::GuildId, (String, HashSet<u64>)>,
 }
 
 impl BotData {
@@ -45,6 +50,7 @@ impl BotData {
         }
         let stay_connected = self.db.get_stay_connected(guild_id.get()).await;
         let autoplay = self.db.get_autoplay(guild_id.get()).await;
+        let volume = self.db.get_volume(guild_id.get()).await;
         self.players
             .entry(guild_id)
             .or_insert_with(|| {
@@ -58,6 +64,7 @@ impl BotData {
                     self.db.clone(),
                     stay_connected,
                     autoplay,
+                    volume,
                 )
             })
             .clone()
@@ -166,6 +173,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     .lastfm_api_key
                     .clone()
                     .map(|key| LastFmClient::new(key, http_client.clone()));
+                let lyrics = crate::lyrics::LyricsClient::new(http_client.clone());
 
                 let data = Arc::new(BotData {
                     config: setup_config,
@@ -173,6 +181,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     songbird,
                     extractor,
                     lastfm,
+                    lyrics,
                     http_client,
                     players: DashMap::new(),
                     search_debug: Cache::builder()
@@ -180,12 +189,21 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                         .time_to_live(Duration::from_secs(30 * 60))
                         .build(),
                     vibe_history: DashMap::new(),
+                    skip_votes: DashMap::new(),
                 });
 
                 if data.config.restore_queue_on_restart {
                     let data = data.clone();
                     tokio::spawn(async move {
                         restore_queues(data).await;
+                    });
+                }
+
+                {
+                    let data = data.clone();
+                    let http = ctx.http.clone();
+                    tokio::spawn(async move {
+                        watch_resolve_failures(data, http).await;
                     });
                 }
 
@@ -243,6 +261,41 @@ async fn restore_queues(data: Arc<BotData>) {
             }
         }
         tracing::info!(%guild_id, %channel_id, track_count, "restore_queues: restored");
+    }
+}
+
+/// Polls the extractor's consecutive-resolve-failure streak and DMs the bot
+/// owners once when it crosses the threshold — a streak this long usually
+/// means the cookies/PO-token setup broke, not that a few videos were bad.
+/// Alerts once per streak, not every poll, and re-arms once a resolve
+/// succeeds again.
+async fn watch_resolve_failures(data: Arc<BotData>, http: Arc<serenity::Http>) {
+    const CHECK_INTERVAL: Duration = Duration::from_secs(60);
+    const FAILURE_THRESHOLD: u32 = 5;
+
+    let mut already_alerted = false;
+    loop {
+        tokio::time::sleep(CHECK_INTERVAL).await;
+        let streak = data.extractor.consecutive_resolve_failures();
+        if streak >= FAILURE_THRESHOLD && !already_alerted {
+            already_alerted = true;
+            tracing::warn!(streak, "watch_resolve_failures: threshold crossed, alerting owners");
+            let content = format!(
+                "⚠️ PyxeeBot has hit **{streak} consecutive** yt-dlp resolve failures. \
+                 Cookies or the PO-token provider may need attention — check `journalctl -u pyxeebotr`."
+            );
+            for owner in &data.config.bot_owners {
+                let builder = serenity::CreateMessage::new().content(content.clone());
+                if let Err(e) = serenity::UserId::new(*owner)
+                    .direct_message(http.as_ref(), builder)
+                    .await
+                {
+                    tracing::warn!(owner, error = %e, "watch_resolve_failures: failed to DM owner");
+                }
+            }
+        } else if streak == 0 {
+            already_alerted = false;
+        }
     }
 }
 
