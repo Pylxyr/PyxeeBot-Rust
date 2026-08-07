@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
-pub use queries::{PlaylistEntry, PlaylistSummary, QueueEntryRef, TopPlayed, TopRequester};
+pub use queries::{PlaylistEntry, PlaylistSummary, QueueEntryRef, TopPlayed, TopRequester, UserStats};
 
 /// Rows of play_history kept per guild — trimmed every `TRIM_EVERY_N_WRITES`
 /// history inserts, matching the Python bot's write-amplification fix.
@@ -23,6 +23,7 @@ pub struct Database {
     dj_role_cache: DashMap<u64, Option<u64>>,
     stay_connected_cache: DashMap<u64, bool>,
     autoplay_cache: DashMap<u64, bool>,
+    volume_cache: DashMap<u64, u8>,
     snapshot_hashes: DashMap<u64, u64>,
 }
 
@@ -53,6 +54,7 @@ impl Database {
             dj_role_cache: DashMap::new(),
             stay_connected_cache: DashMap::new(),
             autoplay_cache: DashMap::new(),
+            volume_cache: DashMap::new(),
             snapshot_hashes: DashMap::new(),
         })
     }
