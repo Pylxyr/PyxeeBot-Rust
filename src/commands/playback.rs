@@ -316,17 +316,18 @@ pub async fn voteskip(ctx: Context<'_>) -> anyhow::Result<()> {
         ctx.say("Not connected to a voice channel.").await?;
         return Ok(());
     };
-    let Some(guild) = ctx.serenity_context().cache.guild(guild_id) else {
+    let bot_id = ctx.serenity_context().cache.current_user().id;
+    let listeners: Option<usize> = ctx.serenity_context().cache.guild(guild_id).map(|guild| {
+        guild
+            .voice_states
+            .values()
+            .filter(|vs| vs.channel_id == Some(bot_channel) && vs.user_id != bot_id)
+            .count()
+    });
+    let Some(listeners) = listeners else {
         ctx.say("Couldn't read the voice channel.").await?;
         return Ok(());
     };
-    let bot_id = ctx.serenity_context().cache.current_user().id;
-    let listeners = guild
-        .voice_states
-        .values()
-        .filter(|vs| vs.channel_id == Some(bot_channel) && vs.user_id != bot_id)
-        .count();
-    drop(guild);
     let needed = listeners.div_ceil(2).max(1);
 
     let key = current.webpage_url.clone();
