@@ -1,6 +1,7 @@
 mod cache;
 mod ytdlp;
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -12,7 +13,7 @@ use crate::models::Track;
 use crate::scoring;
 
 pub use cache::{ResolveCache, ResolvedInfo, SearchCache};
-pub use ytdlp::{extract_args, search_args};
+pub use ytdlp::{extract_args, extract_playlist_args, search_args};
 
 pub struct Extractor {
     config: Arc<Config>,
@@ -22,6 +23,10 @@ pub struct Extractor {
     extract_semaphore: Semaphore,
     /// `--flat-playlist` search listings: lighter, separate budget.
     search_semaphore: Semaphore,
+    /// Consecutive resolve/extract failures, reset to 0 on any success.
+    /// Search failures don't count — a "no results" search is normal, a
+    /// streak of resolve failures usually means cookies/PO-token broke.
+    resolve_failure_streak: AtomicU32,
 }
 
 impl Extractor {
@@ -36,6 +41,19 @@ impl Extractor {
             search_cache,
             extract_semaphore,
             search_semaphore,
+            resolve_failure_streak: AtomicU32::new(0),
+        }
+    }
+
+    pub fn consecutive_resolve_failures(&self) -> u32 {
+        self.resolve_failure_streak.load(Ordering::Relaxed)
+    }
+
+    fn record_resolve_outcome(&self, ok: bool) {
+        if ok {
+            self.resolve_failure_streak.store(0, Ordering::Relaxed);
+        } else {
+            self.resolve_failure_streak.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -93,15 +111,24 @@ impl Extractor {
     }
 
     /// Extracts metadata for a direct URL (no search/ranking involved).
-    /// `flat_playlist` set true also picks up every entry of a playlist URL.
+    /// `flat_playlist` only affects listing depth for a single video — it
+    /// does not expand a playlist URL, since `--no-playlist` is always
+    /// passed here too. Use `extract_playlist` for that.
     pub async fn extract_url(
         &self,
         url: &str,
         requester_id: u64,
         flat_playlist: bool,
     ) -> Result<Vec<Track>> {
-        let args = ytdlp::extract_args(&self.config, url, flat_playlist);
-        let entries = self.run(&args).await?;
+        let args = ytdlp::extract_args(&self.config, url, flat_playlist, None);
+        let entries = match self.run(&args).await {
+            Ok(e) => e,
+            Err(e) => {
+                self.record_resolve_outcome(false);
+                return Err(e);
+            }
+        };
+        self.record_resolve_outcome(true);
         let mut tracks = Vec::with_capacity(entries.len());
         for item in &entries {
             let track = track_from_json(item, requester_id, url);
@@ -111,20 +138,52 @@ impl Extractor {
         Ok(tracks)
     }
 
-    /// Resolves (or returns cached) the direct audio stream URL for a track.
-    pub async fn resolve_stream(&self, track: &Track) -> Result<ResolvedInfo> {
-        if let Some(cached) = self.cache.get(&track.webpage_url).await {
-            tracing::info!(url = %track.webpage_url, "resolve_stream: cache hit");
-            return Ok(cached);
+    /// Lists every entry of a genuine playlist URL (not a single video that
+    /// incidentally carries a `list=` param — callers decide that upstream).
+    /// Doesn't count toward the resolve-failure streak: a listing call isn't
+    /// the same signal as a per-video extraction failing.
+    pub async fn extract_playlist(
+        &self,
+        url: &str,
+        requester_id: u64,
+        limit: usize,
+    ) -> Result<Vec<Track>> {
+        let args = ytdlp::extract_playlist_args(&self.config, url);
+        let entries = self.run_search(&args).await?;
+        let mut tracks = Vec::with_capacity(entries.len().min(limit));
+        for item in entries.iter().take(limit) {
+            let track = track_from_json(item, requester_id, url);
+            self.prime_cache(&track.webpage_url, item).await;
+            tracks.push(track);
         }
-        tracing::info!(url = %track.webpage_url, "resolve_stream: cache miss, extracting");
-        let args = ytdlp::extract_args(&self.config, &track.webpage_url, false);
-        let entries = self.run(&args).await?;
-        let item = entries
-            .into_iter()
-            .next()
-            .ok_or_else(|| BotError::NoResult(track.webpage_url.clone()))?;
-        let info = resolved_info_from_json(&item)?;
+        Ok(tracks)
+    }
+
+    /// Resolves (or returns cached) the direct audio stream URL for a track.
+    /// `client_override` selects a specific yt-dlp YouTube player client
+    /// instead of the default — pass one on a retry after a failure.
+    pub async fn resolve_stream(
+        &self,
+        track: &Track,
+        client_override: Option<&str>,
+    ) -> Result<ResolvedInfo> {
+        if client_override.is_none() {
+            if let Some(cached) = self.cache.get(&track.webpage_url).await {
+                tracing::info!(url = %track.webpage_url, "resolve_stream: cache hit");
+                return Ok(cached);
+            }
+        }
+        tracing::info!(url = %track.webpage_url, client = ?client_override, "resolve_stream: extracting");
+        let args = ytdlp::extract_args(&self.config, &track.webpage_url, false, client_override);
+        let result = self.run(&args).await.and_then(|entries| {
+            let item = entries
+                .into_iter()
+                .next()
+                .ok_or_else(|| BotError::NoResult(track.webpage_url.clone()))?;
+            resolved_info_from_json(&item)
+        });
+        self.record_resolve_outcome(result.is_ok());
+        let info = result?;
         self.cache
             .insert(track.webpage_url.clone(), info.clone())
             .await;
@@ -138,18 +197,26 @@ impl Extractor {
             return Some(Ok(cached));
         }
         let _permit = self.extract_semaphore.try_acquire().ok()?;
-        let args = ytdlp::extract_args(&self.config, &track.webpage_url, false);
+        let args = ytdlp::extract_args(&self.config, &track.webpage_url, false, None);
         let entries = match ytdlp::run_ytdlp(&self.config, &args).await {
             Ok(e) => e,
-            Err(e) => return Some(Err(e)),
+            Err(e) => {
+                self.record_resolve_outcome(false);
+                return Some(Err(e));
+            }
         };
         let Some(item) = entries.into_iter().next() else {
+            self.record_resolve_outcome(false);
             return Some(Err(BotError::NoResult(track.webpage_url.clone())));
         };
         let info = match resolved_info_from_json(&item) {
             Ok(i) => i,
-            Err(e) => return Some(Err(e)),
+            Err(e) => {
+                self.record_resolve_outcome(false);
+                return Some(Err(e));
+            }
         };
+        self.record_resolve_outcome(true);
         self.cache
             .insert(track.webpage_url.clone(), info.clone())
             .await;
