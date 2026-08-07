@@ -14,4 +14,5 @@ pub struct PlayerSnapshot {
     pub channel_id: Option<ChannelId>,
     pub total_duration_secs: i64,
     pub elapsed_secs: i64,
+    pub volume: u8,
 }
