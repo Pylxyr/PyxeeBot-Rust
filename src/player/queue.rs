@@ -168,6 +168,7 @@ impl PlayerState {
         is_paused: bool,
         elapsed_secs: i64,
         channel_id: Option<ChannelId>,
+        volume: u8,
     ) -> PlayerSnapshot {
         PlayerSnapshot {
             current: self.current.clone(),
@@ -180,6 +181,7 @@ impl PlayerState {
             channel_id,
             total_duration_secs: self.total_duration,
             elapsed_secs,
+            volume,
         }
     }
 }
