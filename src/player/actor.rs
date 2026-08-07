@@ -45,6 +45,10 @@ pub enum PlayerCommand {
     Resume {
         reply: oneshot::Sender<()>,
     },
+    SetVolume {
+        volume: u8,
+        reply: oneshot::Sender<()>,
+    },
     Leave {
         reply: oneshot::Sender<Result<bool>>,
     },
@@ -157,6 +161,10 @@ pub struct PlayerActor {
     /// track's background resolve. See handle_play/resolve_pending_play.
     pending_play_reply: Option<(oneshot::Sender<Result<PlayOutcome>>, usize)>,
     prefetch_task: Option<AbortHandle>,
+    /// 0-200, applied to every TrackHandle as it's created (songbird's
+    /// volume lives on the track, not the driver, so it has to be
+    /// reapplied on every track start, not set once).
+    volume: u8,
 }
 
 impl PlayerActor {
@@ -171,6 +179,7 @@ impl PlayerActor {
         db: Arc<Database>,
         stay_connected: bool,
         autoplay: bool,
+        volume: u8,
     ) -> (
         mpsc::UnboundedSender<PlayerCommand>,
         watch::Receiver<PlayerSnapshot>,
@@ -205,6 +214,7 @@ impl PlayerActor {
             last_finished_generation: None,
             pending_play_reply: None,
             prefetch_task: None,
+            volume,
         };
         tokio::spawn(actor.run());
         (tx, snapshot_rx)
@@ -297,6 +307,7 @@ impl PlayerActor {
             self.is_paused,
             self.elapsed_secs(),
             self.channel_id,
+            self.volume,
         ));
     }
 
@@ -355,6 +366,22 @@ impl PlayerActor {
                         self.paused_total += since.elapsed();
                     }
                 }
+                self.publish_snapshot();
+                let _ = reply.send(());
+            }
+            PlayerCommand::SetVolume { volume, reply } => {
+                self.volume = volume;
+                if let Some(handle) = &self.current_handle {
+                    let _ = handle.set_volume(f32::from(volume) / 100.0);
+                }
+                let db = self.db.clone();
+                let guild_id = self.guild_id.get();
+                let default_prefix = self.config.default_prefix.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = db.set_volume(guild_id, volume, &default_prefix).await {
+                        tracing::warn!(guild_id, error = %e, "failed to persist volume");
+                    }
+                });
                 self.publish_snapshot();
                 let _ = reply.send(());
             }
@@ -535,7 +562,7 @@ impl PlayerActor {
             let extractor = self.extractor.clone();
             let speculative = track.clone();
             tokio::spawn(async move {
-                let _ = extractor.resolve_stream(&speculative).await;
+                let _ = extractor.resolve_stream(&speculative, None).await;
             });
             let call = match lifecycle::connect(&self.songbird, self.guild_id, channel_id).await {
                 Ok(call) => call,
@@ -721,9 +748,13 @@ impl PlayerActor {
         let self_tx = self.self_tx.clone();
         let guild_id = self.guild_id;
         let title = track.title.clone();
-        tracing::info!(%guild_id, %title, generation, "spawn_resolve_for_current: resolving in background");
+        // On a retry, try a different YouTube player client — some
+        // bot-detection failures are specific to the default client and
+        // clear up with another, so this isn't just repeating what failed.
+        let client_override = self.retried_current_track.then_some("android");
+        tracing::info!(%guild_id, %title, generation, retry = self.retried_current_track, "spawn_resolve_for_current: resolving in background");
         tokio::spawn(async move {
-            let result = extractor.resolve_stream(&track).await;
+            let result = extractor.resolve_stream(&track, client_override).await;
             let _ = self_tx.send(PlayerCommand::ResolveDone { generation, result });
         });
     }
@@ -766,7 +797,7 @@ impl PlayerActor {
     async fn play_track(&mut self, track: Track) -> Result<()> {
         tracing::info!(guild_id = %self.guild_id, title = %track.title, url = %track.webpage_url, "play_track: resolving stream");
         let resolve_start = std::time::Instant::now();
-        let resolved = self.extractor.resolve_stream(&track).await?;
+        let resolved = self.extractor.resolve_stream(&track, None).await?;
         tracing::info!(
             guild_id = %self.guild_id,
             title = %track.title,
@@ -828,6 +859,7 @@ impl PlayerActor {
             errored: true,
         };
         let _ = handle.add_event(Event::Track(TrackEvent::Error), error_notifier);
+        let _ = handle.set_volume(f32::from(self.volume) / 100.0);
 
         self.current_handle = Some(handle);
         self.is_paused = false;
@@ -841,9 +873,10 @@ impl PlayerActor {
         let title = track.title.clone();
         let webpage_url = track.webpage_url.clone();
         let requester_id = track.requester_id;
+        let duration = track.duration;
         tokio::spawn(async move {
             if let Err(e) = db
-                .add_play_history(guild_id, &title, &webpage_url, requester_id)
+                .add_play_history(guild_id, &title, &webpage_url, requester_id, duration)
                 .await
             {
                 tracing::warn!(guild_id = guild_id, error = %e, "play_track: failed to record play history");
@@ -913,6 +946,7 @@ impl PlayerActor {
             errored: true,
         };
         let _ = handle.add_event(Event::Track(TrackEvent::Error), error_notifier);
+        let _ = handle.set_volume(f32::from(self.volume) / 100.0);
 
         self.current_handle = Some(handle);
         self.is_paused = false;
@@ -926,9 +960,10 @@ impl PlayerActor {
         let title = track.title.clone();
         let webpage_url = track.webpage_url.clone();
         let requester_id = track.requester_id;
+        let duration = track.duration;
         tokio::spawn(async move {
             if let Err(e) = db
-                .add_play_history(guild_id, &title, &webpage_url, requester_id)
+                .add_play_history(guild_id, &title, &webpage_url, requester_id, duration)
                 .await
             {
                 tracing::warn!(guild_id = guild_id, error = %e, "finish_starting_track: failed to record play history");
