@@ -16,15 +16,18 @@ type Error = anyhow::Error;
 pub fn all() -> Vec<poise::Command<Arc<BotData>, Error>> {
     vec![
         misc::ping(),
+        misc::lyrics(),
         // playback
         playback::join(),
         playback::leave(),
         playback::play(),
         playback::playnext(),
         playback::skip(),
+        playback::voteskip(),
         playback::stop(),
         playback::pause(),
         playback::resume(),
+        playback::volume(),
         playback::previous(),
         playback::loop_cmd(),
         playback::nowplaying(),
@@ -37,6 +40,7 @@ pub fn all() -> Vec<poise::Command<Arc<BotData>, Error>> {
         queue::history(),
         queue::toptracks(),
         queue::toprequestors(),
+        queue::mystats(),
         // search
         search::search(),
         search::why(),
