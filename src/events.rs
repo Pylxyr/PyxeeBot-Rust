@@ -82,10 +82,10 @@ async fn handle_component_interaction(
                 _ => unreachable!(),
             }
             let snapshot = player.snapshot();
-            let content = components::now_playing_content(&snapshot);
+            let embed = components::now_playing_embed(&snapshot);
             let buttons = components::now_playing_buttons(&snapshot);
             let _ = interaction
-                .create_response(ctx, components::update_response(content, buttons))
+                .create_response(ctx, components::update_response_embed(embed, buttons))
                 .await;
         }
         components::NP_CLOSE => {
