@@ -160,13 +160,13 @@ async fn queue_snapshot_round_trips_and_can_be_cleared() {
 #[tokio::test]
 async fn play_history_and_top_played_and_top_requesters() {
     let db = temp_db().await;
-    db.add_play_history(1, "Song A", "https://example.com/a", 10)
+    db.add_play_history(1, "Song A", "https://example.com/a", 10, 200)
         .await
         .unwrap();
-    db.add_play_history(1, "Song A", "https://example.com/a", 10)
+    db.add_play_history(1, "Song A", "https://example.com/a", 10, 200)
         .await
         .unwrap();
-    db.add_play_history(1, "Song B", "https://example.com/b", 20)
+    db.add_play_history(1, "Song B", "https://example.com/b", 20, 180)
         .await
         .unwrap();
 
@@ -177,6 +177,14 @@ async fn play_history_and_top_played_and_top_requesters() {
     let requesters = db.get_top_requesters(1, 10).await.unwrap();
     assert_eq!(requesters[0].requester_id, 10);
     assert_eq!(requesters[0].request_count, 2);
+
+    let stats = db.get_user_stats(1, 10).await.unwrap();
+    assert_eq!(stats.play_count, 2);
+    assert_eq!(stats.total_seconds, 400);
+
+    let user_top = db.get_user_top_tracks(1, 10, 10).await.unwrap();
+    assert_eq!(user_top[0].title, "Song A");
+    assert_eq!(user_top[0].play_count, 2);
 }
 
 #[tokio::test]

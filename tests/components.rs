@@ -1,4 +1,4 @@
-use pyxeebot::components::now_playing_content;
+use pyxeebot::components::now_playing_embed;
 use pyxeebot::models::{LoopMode, Track};
 use pyxeebot::player::PlayerSnapshot;
 
@@ -17,49 +17,62 @@ fn track(title: &str, requester_id: u64) -> Track {
     }
 }
 
-#[test]
-fn now_playing_content_shows_nothing_playing_when_empty() {
-    let snapshot = PlayerSnapshot::default();
-    assert_eq!(
-        now_playing_content(&snapshot),
-        "Nothing is playing right now."
-    );
+fn embed_json(snapshot: &PlayerSnapshot) -> String {
+    serde_json::to_string(&now_playing_embed(snapshot)).unwrap()
 }
 
 #[test]
-fn now_playing_content_shows_playing_state() {
+fn now_playing_embed_shows_nothing_playing_when_empty() {
+    let snapshot = PlayerSnapshot::default();
+    assert!(embed_json(&snapshot).contains("Nothing is playing right now."));
+}
+
+#[test]
+fn now_playing_embed_shows_playing_state() {
     let snapshot = PlayerSnapshot {
         current: Some(track("Song Title", 42)),
         is_paused: false,
         loop_mode: LoopMode::Off,
         ..Default::default()
     };
-    let content = now_playing_content(&snapshot);
-    assert!(content.contains("Now playing"));
-    assert!(content.contains("Song Title"));
-    assert!(content.contains("<@42>"));
-    assert!(content.contains("2:05")); // 125 seconds
+    let json = embed_json(&snapshot);
+    assert!(json.contains("Now Playing"));
+    assert!(json.contains("Song Title"));
+    assert!(json.contains("<@42>"));
+    assert!(json.contains("2:05")); // 125 seconds
 }
 
 #[test]
-fn now_playing_content_shows_paused_state() {
+fn now_playing_embed_shows_paused_state() {
     let snapshot = PlayerSnapshot {
         current: Some(track("Song Title", 1)),
         is_paused: true,
         ..Default::default()
     };
-    let content = now_playing_content(&snapshot);
-    assert!(content.contains("Paused"));
-    assert!(!content.contains("Now playing"));
+    let json = embed_json(&snapshot);
+    assert!(json.contains("Paused"));
+    assert!(!json.contains("Now Playing"));
 }
 
 #[test]
-fn now_playing_content_shows_loop_mode() {
+fn now_playing_embed_shows_loop_mode() {
     let snapshot = PlayerSnapshot {
         current: Some(track("Song Title", 1)),
         loop_mode: LoopMode::All,
         ..Default::default()
     };
-    let content = now_playing_content(&snapshot);
-    assert!(content.contains("Entire queue"));
+    assert!(embed_json(&snapshot).contains("Entire queue"));
+}
+
+#[test]
+fn now_playing_embed_shows_up_next() {
+    let snapshot = PlayerSnapshot {
+        current: Some(track("Song Title", 1)),
+        queue: vec![track("Next Song", 2), track("Third Song", 3)],
+        ..Default::default()
+    };
+    let json = embed_json(&snapshot);
+    assert!(json.contains("Up next"));
+    assert!(json.contains("Next Song"));
+    assert!(json.contains("Third Song"));
 }

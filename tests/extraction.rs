@@ -45,7 +45,7 @@ fn test_config() -> Config {
 #[test]
 fn extract_args_includes_format_and_no_playlist() {
     let config = test_config();
-    let args = extract_args(&config, "https://example.com/video", false);
+    let args = extract_args(&config, "https://example.com/video", false, None);
     assert!(args.contains(&"--dump-json".to_owned()));
     assert!(args.contains(&"--no-playlist".to_owned()));
     assert!(!args.contains(&"--flat-playlist".to_owned()));
@@ -55,7 +55,7 @@ fn extract_args_includes_format_and_no_playlist() {
 #[test]
 fn extract_args_flat_playlist_adds_flag() {
     let config = test_config();
-    let args = extract_args(&config, "https://example.com/playlist", true);
+    let args = extract_args(&config, "https://example.com/playlist", true, None);
     assert!(args.contains(&"--flat-playlist".to_owned()));
 }
 
@@ -64,7 +64,7 @@ fn extract_args_always_sets_cache_dir() {
     // yt-dlp's default cache dir is blocked by ProtectHome=read-only;
     // --cache-dir must always point at config.ytdlp_cache_dir instead.
     let config = test_config();
-    let args = extract_args(&config, "https://example.com/video", false);
+    let args = extract_args(&config, "https://example.com/video", false, None);
     let idx = args.iter().position(|a| a == "--cache-dir").unwrap();
     assert_eq!(args[idx + 1], config.ytdlp_cache_dir.display().to_string());
 }
@@ -72,7 +72,7 @@ fn extract_args_always_sets_cache_dir() {
 #[test]
 fn extract_args_omits_pot_provider_by_default() {
     let config = test_config();
-    let args = extract_args(&config, "https://example.com/video", false);
+    let args = extract_args(&config, "https://example.com/video", false, None);
     assert!(!args.iter().any(|a| a.starts_with("youtubepot-bgutilhttp:")));
 }
 
@@ -80,7 +80,7 @@ fn extract_args_omits_pot_provider_by_default() {
 fn extract_args_adds_pot_provider_when_configured() {
     let mut config = test_config();
     config.ytdlp_pot_provider_base_url = Some("http://127.0.0.1:4416".to_owned());
-    let args = extract_args(&config, "https://example.com/video", false);
+    let args = extract_args(&config, "https://example.com/video", false, None);
     assert!(args.contains(&"youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416".to_owned()));
 }
 
