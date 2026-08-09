@@ -65,9 +65,8 @@ impl PlayerState {
     }
 
     /// Prepends to the front, evicting the back if already at capacity —
-    /// mirrors `deque.appendleft` semantics. This eviction path is exactly
-    /// what the Python version originally missed for `!replay` and loop
-    /// mode, silently drifting `total_duration` out of sync with the queue.
+    /// mirrors `deque.appendleft`. The Python version missed this eviction
+    /// for `!replay`/loop mode, drifting `total_duration` out of sync.
     pub fn push_front(&mut self, track: Track) {
         if self.queue.len() >= self.max_queue_size {
             if let Some(evicted) = self.queue.pop_back() {
@@ -142,13 +141,9 @@ impl PlayerState {
         track
     }
 
-    /// Removes the track at `position` only if `requester_id` is the one
-    /// who queued it, or `is_dj` is true. The permission check and the
-    /// removal happen together here, inside the actor's exclusive access to
-    /// this state — the caller no longer has to snapshot the queue to check
-    /// who requested a track and then remove it in a second step, which
-    /// left a window for the queue to change in between (e.g. another
-    /// removal shifting positions) and could act on stale ownership info.
+    /// Removes the track at `position` only if `requester_id` queued it or
+    /// `is_dj` is true. Checks and removes atomically here, so there's no
+    /// window for the queue to change between checking ownership and removing.
     pub fn remove_if_allowed(
         &mut self,
         position: usize,
@@ -179,16 +174,9 @@ impl PlayerState {
         }
     }
 
-    /// Whether an empty-channel disconnect should proceed. This is the exact
-    /// check the Python version was missing — `_disconnect_when_empty` had
-    /// no `stay_connected` guard, so `!stay` was ignored once every human
-    /// left the channel.
-    ///
-    /// By the time this fires, the actor has already relied on
-    /// `events.rs` to have sent `CancelEmptyDisconnect` if a human rejoined
-    /// the channel before the timer elapsed — the player itself has no way
-    /// to re-check current voice-channel occupancy, so `stay_connected` is
-    /// the only thing left to consult here.
+    /// Whether an empty-channel disconnect should proceed. The Python
+    /// version was missing this `stay_connected` guard entirely. Relies on
+    /// `events.rs` having already cancelled the timer if someone rejoined.
     pub fn should_disconnect_when_empty(&self) -> bool {
         !self.stay_connected
     }

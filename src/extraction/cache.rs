@@ -12,11 +12,9 @@ pub struct ResolvedInfo {
     /// Extra HTTP headers yt-dlp reports are needed to fetch `stream_url`
     /// (from `--dump-json`'s `http_headers` object).
     pub headers: Vec<(String, String)>,
-    /// Upper bound on the resource's byte length, from yt-dlp's `filesize`
-    /// or `filesize_approx`. Some CDNs — notably YouTube's — expect a
-    /// bounded `range: bytes=0-N` request instead of an open-ended
-    /// `range: bytes=0-`, and songbird's `HttpRequest` needs this value to
-    /// build that bound.
+    /// Upper bound on byte length (from yt-dlp's filesize/filesize_approx).
+    /// Some CDNs (e.g. YouTube) require a bounded byte-range request, which
+    /// songbird's `HttpRequest` needs this value to build.
     pub content_length: Option<u64>,
 }
 
@@ -49,12 +47,9 @@ impl ResolveCache {
     }
 }
 
-/// Caches raw flat-playlist search entries keyed by normalized query text.
-/// Ranking is cheap enough to redo per-call (microseconds for the result
-/// counts involved), so this only needs to cache the yt-dlp round trip
-/// itself, not any particular command's ranked/sliced view of it. A hit
-/// with more entries than needed is still valid — the caller just takes a
-/// prefix; a hit with fewer is treated as a miss.
+/// Caches raw search entries by normalized query — only the yt-dlp round
+/// trip needs caching, since ranking is cheap to redo per call. A hit with
+/// enough entries is valid (caller takes a prefix); fewer counts as a miss.
 pub struct SearchCache {
     inner: Cache<String, Vec<serde_json::Value>>,
 }

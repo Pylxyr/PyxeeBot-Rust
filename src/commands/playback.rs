@@ -18,11 +18,9 @@ fn voice_channel_of(
         .and_then(|vs| vs.channel_id)
 }
 
-/// A genuine playlist page (`/playlist?list=...`, no specific video) — not a
-/// video URL that just happens to carry an incidental `list=` param, which
-/// YouTube attaches to almost every "watch next" / autoplay-mix link. Those
-/// should still just play the one video, so this deliberately requires
-/// "list=" without "v=" rather than treating any list= as a playlist.
+/// True only for an actual playlist page (`list=` without `v=`) — not a
+/// video URL that incidentally carries `list=`, which YouTube attaches to
+/// almost every autoplay-mix link and should still just play that video.
 fn is_playlist_url(url: &str) -> bool {
     let lower = url.to_lowercase();
     lower.contains("list=") && !lower.contains("v=")
@@ -269,7 +267,7 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
     Ok(())
 }
 
-/// Skip for DJ, voteskip for non-DJ
+/// Skip the current track. DJs only — use `!voteskip` otherwise.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("s"))]
 pub async fn skip(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {

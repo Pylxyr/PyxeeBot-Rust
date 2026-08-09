@@ -41,10 +41,8 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         .say(format!("Building a vibe around `{artist}`..."))
         .await?;
 
-    // Try resolving the input as "artist + song" first (e.g. "zutomayo
-    // saturn") — that's how this is actually used, the same way you'd type
-    // !play. Falls back to artist-level similarity if no track matches or
-    // the seed track has no similar tracks of its own.
+    // Try "artist + song" first (typed the same way as !play), falling
+    // back to artist-level similarity if nothing matches.
     let mut queries: Vec<String> = Vec::new();
     if let Ok(Some((resolved_artist, resolved_track))) = lastfm.resolve_track(&artist).await {
         if let Ok(similar) = lastfm
@@ -85,10 +83,8 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         };
     }
 
-    // Prefer songs this guild's !vibe hasn't queued recently (last
-    // VIBE_HISTORY_CAP unique, sliding window). Only falls back to
-    // candidates already in that history if every candidate this time
-    // happens to be a repeat.
+    // Prefer songs outside this guild's recent !vibe history; only reuse
+    // one if every candidate this round is a repeat.
     {
         let seen = data.vibe_history.get(&guild_id);
         let fresh: Vec<String> = queries

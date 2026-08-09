@@ -170,10 +170,8 @@ async fn handle_search_pick(
     track.requester_id = user_id.get();
     let title = track.escaped_title();
 
-    // Component interactions must be acknowledged within 3 seconds. The
-    // play() call below does search resolution and a voice connect, both of
-    // which routinely take longer than that — so acknowledge first (no
-    // loading indicator shown to the user) and edit the response once done.
+    // Interactions must be acked within 3s, but play() (search + voice
+    // connect) routinely takes longer — ack first, edit once it's done.
     let _ = interaction
         .create_response(ctx, CreateInteractionResponse::Acknowledge)
         .await;
@@ -238,10 +236,8 @@ async fn handle_voice_state_update(
 
     if new.user_id == bot_id {
         let Some(new_channel) = new.channel_id else {
-            // Force-kicked (or a clean !leave, which is harmless to re-check
-            // here since stay_connected will be false in that case). This is
-            // the exact regression fix from the Python bug hunt: only try to
-            // rejoin if stay_connected is actually on.
+            // Only rejoin if stay_connected is on — otherwise this fires
+            // harmlessly after a clean !leave too.
             let Some(old_channel) = old.and_then(|o| o.channel_id) else {
                 return;
             };

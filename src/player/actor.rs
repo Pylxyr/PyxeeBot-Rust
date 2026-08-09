@@ -87,19 +87,13 @@ pub enum PlayerCommand {
     /// Voice state moved to a new channel without disconnecting (e.g. a
     /// mod dragged us) — songbird already followed it, this just syncs.
     SyncChannel(ChannelId),
-    /// Fired by the songbird EventHandler when a track ends normally,
-    /// carrying the generation number it was registered under. If that no
-    /// longer matches `current_generation`, this track was already
-    /// superseded by a manual skip/previous/stop — the signal is stale and
-    /// ignored.
+    /// Fired when a track ends normally, carrying its generation number.
+    /// If that no longer matches `current_generation`, it was already
+    /// superseded (e.g. a manual skip) — the signal is stale and ignored.
     TrackEnded(u64),
-    /// Same generation-check semantics as TrackEnded, but for songbird's
-    /// TrackEvent::Error — a decode/playback failure after play_track
-    /// already returned Ok (e.g. a corrupt stream). Songbird still fires
-    /// End for these too, so the queue was already advancing correctly;
-    /// this exists so the failure is logged distinctly and the track isn't
-    /// requeued for loop mode (a broken track looping forever would retry
-    /// and fail every time).
+    /// Same generation check as TrackEnded, but for a playback failure
+    /// (e.g. a corrupt stream) after play_track returned Ok. Exists so the
+    /// failure is logged distinctly and not requeued for loop mode.
     TrackErrored(u64),
     ScheduleEmptyDisconnect,
     CancelEmptyDisconnect,
@@ -328,10 +322,8 @@ impl PlayerActor {
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
                 } else if self.state.current.is_some() {
-                    // Nothing actually playing yet — a resolve for the
-                    // current track is still in flight. Invalidate it and
-                    // move on ourselves, since there's no songbird handle
-                    // whose End/Error event would otherwise do it for us.
+                    // Still resolving, no songbird handle exists yet — so
+                    // invalidate it and advance ourselves.
                     self.current_generation += 1;
                     self.discard_current_and_advance();
                 }
@@ -563,11 +555,9 @@ impl PlayerActor {
         if self.call.is_none() || self.channel_id != Some(channel_id) {
             tracing::info!(guild_id = %self.guild_id, channel_id = %channel_id, "handle_play: connecting to voice channel");
             let connect_start = std::time::Instant::now();
-            // Speculative cache warm, fired and forgotten — the background
-            // resolve below will hit cache once this lands. Not joined with
-            // connect: that's yt-dlp time on the actor's own command loop,
-            // which is exactly what blocked other commands for this guild
-            // during a guild's first !play.
+            // Speculative cache warm, fired and forgotten (the resolve
+            // below will hit cache once it lands). Not awaited — that yt-dlp
+            // time is exactly what used to block a guild's first !play.
             let extractor = self.extractor.clone();
             let speculative = track.clone();
             tokio::spawn(async move {
@@ -645,12 +635,9 @@ impl PlayerActor {
         }
     }
 
-    /// Shared by TrackEnded and TrackErrored. An errored track isn't
-    /// requeued for loop mode, since it would just fail again.
-    ///
-    /// `last_finished_generation` dedups songbird's paired Error+End fire
-    /// instead of `current_handle`, which Skip clears before TrackEnded
-    /// arrives.
+    /// Shared by TrackEnded and TrackErrored; an errored track isn't
+    /// requeued for loop mode. `last_finished_generation` dedups songbird's
+    /// paired Error+End fire (current_handle is already cleared by Skip).
     async fn handle_track_finished(&mut self, generation: u64, errored: bool) {
         if generation != self.current_generation
             || self.last_finished_generation == Some(generation)
@@ -675,11 +662,9 @@ impl PlayerActor {
         self.maybe_autoplay(finished).await;
     }
 
-    /// A track failed — either its resolve came back an error, or it
-    /// resolved fine but songbird couldn't actually play the URL. Either
-    /// way `self.state.current` is still the failed track. Retries it once
-    /// with a fresh (cache-bypassing) resolve; on a second failure, gives up
-    /// on it without requeuing and moves to whatever's next.
+    /// A track's resolve or playback failed. Retries once with a fresh
+    /// (cache-bypassing) resolve; on a second failure, drops it without
+    /// requeuing and moves on.
     async fn handle_resolve_failure(&mut self) {
         if !self.retried_current_track {
             self.retried_current_track = true;
@@ -725,10 +710,9 @@ impl PlayerActor {
         }
     }
 
-    /// Like `advance_and_resolve_next`, but for a track that's being given
-    /// up on without ever having played (failed twice, or skipped while its
-    /// resolve was still pending) — discarded outright, not sent to history
-    /// or requeued for loop mode.
+    /// Like `advance_and_resolve_next`, but for a track abandoned before it
+    /// ever played (failed twice, or skipped mid-resolve) — discarded
+    /// outright, not sent to history or requeued.
     fn discard_current_and_advance(&mut self) {
         self.state.current = self.state.pop_front();
         self.retried_current_track = false;
@@ -740,12 +724,9 @@ impl PlayerActor {
         }
     }
 
-    /// Resolves `self.state.current` in the background and reports back via
-    /// `PlayerCommand::ResolveDone` instead of blocking the actor's command
-    /// loop — a resolve can legitimately take several seconds to tens of
-    /// seconds on this hardware, and the actor processes one command fully
-    /// before the next, so awaiting it inline would leave the guild's
-    /// player unresponsive to !skip/!stop for that whole window.
+    /// Resolves `self.state.current` in the background, reporting back via
+    /// `ResolveDone` instead of blocking the command loop — a resolve can
+    /// take tens of seconds, and awaiting it inline would freeze !skip/!stop.
     fn spawn_resolve_for_current(&mut self) {
         let Some(track) = self.state.current.clone() else {
             return;
@@ -895,12 +876,9 @@ impl PlayerActor {
         Ok(())
     }
 
-    /// The songbird hand-off half of playing a track, taking an
-    /// already-resolved `ResolvedInfo` — used by the background-resolve
-    /// path (`handle_resolve_done`) once a result comes back, so this part
-    /// mirrors `play_track`'s second half deliberately rather than sharing
-    /// code with it, to avoid touching the still-inline blocking path that
-    /// `!play`/`!previous` rely on for their reply.
+    /// The songbird hand-off half of playing a track, given an
+    /// already-resolved `ResolvedInfo`. Mirrors `play_track`'s second half
+    /// rather than sharing code, to avoid touching its inline blocking path.
     async fn finish_starting_track(
         &mut self,
         track: Track,
@@ -982,10 +960,9 @@ impl PlayerActor {
         Ok(())
     }
 
-    /// Autoplay: finds an artist similar to the just-finished track via
-    /// Last.fm, searches for a track by them, and plays it. A no-op if
-    /// Last.fm isn't configured or nothing playable turns up — the caller
-    /// falls back to arming the idle timer in that case.
+    /// Autoplay: finds a similar artist via Last.fm and plays a track by
+    /// them. A no-op if Last.fm isn't configured or nothing turns up — the
+    /// caller falls back to the idle timer in that case.
     async fn try_autoplay(&mut self, seed: &Track) -> Result<()> {
         let Some(lastfm) = self.lastfm.clone() else {
             return Ok(());
@@ -1020,15 +997,10 @@ impl PlayerActor {
         Ok(())
     }
 
-    /// Resolves the next `ytdlp_prefetch_count` queued tracks in the
-    /// background, one at a time, so by the time the queue advances to
-    /// them, `resolve_stream` is a cache hit instead of a fresh ~10s
-    /// yt-dlp extraction. Sequential, not concurrent: running these in
-    /// parallel measurably slows each individual extraction down on a
-    /// single-core box instead of speeding the batch up, and competes
-    /// with live Opus encoding for the same core. A fresh call cancels
-    /// whatever prefetch was still in flight, so reordering the queue
-    /// re-prioritizes immediately instead of queuing behind stale work.
+    /// Resolves the next `ytdlp_prefetch_count` tracks in the background,
+    /// sequentially — parallel extraction competes with live Opus encoding
+    /// for the same core and is slower overall. A fresh call cancels any
+    /// prefetch still in flight, so reordering re-prioritizes immediately.
     fn spawn_prefetch(&mut self) {
         if let Some(handle) = self.prefetch_task.take() {
             handle.abort();

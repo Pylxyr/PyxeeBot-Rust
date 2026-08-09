@@ -70,10 +70,8 @@ pub struct SearchEntryContext {
     pub description_token_set: HashSet<String>,
 }
 
-/// Per-candidate score breakdown, kept for the `!why` debug command (Phase 3).
-/// `rank_entries` always returns these; the caller decides whether to keep or
-/// discard them — unlike the Python version's opt-in `breakdown` dict, there's
-/// no perf reason in Rust to make this conditional.
+/// Per-candidate score breakdown, used by the `!why` debug command.
+/// Always returned by `rank_entries`; the caller decides whether to keep it.
 #[derive(Debug, Clone, Default)]
 pub struct ScoreBreakdown {
     pub final_score: f64,
@@ -489,10 +487,9 @@ pub fn score_entry(
     }
 }
 
-/// Scores, sorts (descending; ties keep original order), and returns entries
-/// alongside their breakdowns. Unlike the Python version, this does not own
-/// any per-guild debug history — the `!why` command (Phase 3) is responsible
-/// for keeping whatever slice of this it wants to remember.
+/// Scores, sorts descending (ties keep original order), and returns entries
+/// with their breakdowns. Doesn't own any debug history itself — `!why` is
+/// responsible for keeping whatever it wants to remember.
 pub fn rank_entries(
     search_text: &str,
     entries: Vec<Value>,

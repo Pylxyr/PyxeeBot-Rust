@@ -84,11 +84,9 @@ pub fn now_playing_buttons(snapshot: &PlayerSnapshot) -> Vec<CreateActionRow> {
     ])]
 }
 
-/// Builds the message text for one page of search results. Position numbers
-/// (`n.`) are absolute across all pages, matching what `!why <n>` expects.
-/// `query` is the original search text on first render; page-navigation
-/// clicks (which don't have it) pass None and get a page-indicator header
-/// instead.
+/// Builds the message text for one page of search results. Position
+/// numbers are absolute across pages (matching `!why <n>`); `query` is
+/// only present on first render, not on page-navigation clicks.
 pub fn search_results_content(
     query: Option<&str>,
     results: &[(Track, ScoreBreakdown)],

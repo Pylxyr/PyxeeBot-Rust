@@ -40,10 +40,8 @@ pub struct BotData {
 }
 
 impl BotData {
-    /// Returns the existing player for this guild, or spawns a new one —
-    /// loading its persisted stay_connected/autoplay settings first, so a
-    /// freshly-spawned player (e.g. after a restart) honours them from the
-    /// start rather than defaulting to off until someone re-toggles them.
+    /// Returns the guild's player, spawning one (with persisted
+    /// stay_connected/autoplay settings) if it doesn't exist yet.
     pub async fn player_for(&self, guild_id: serenity::GuildId) -> Arc<GuildPlayer> {
         if let Some(existing) = self.players.get(&guild_id) {
             return existing.clone();
@@ -76,12 +74,9 @@ pub type Context<'a> = poise::Context<'a, Arc<BotData>, anyhow::Error>;
 pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
     use tracing_subscriber::prelude::*;
 
-    // The configured LOG_LEVEL sets the baseline for everything else (so
-    // noisy dependencies like h2/rustls/tungstenite stay quiet at "info"),
-    // but pyxeebot's own code plus songbird/symphonia — the crates that
-    // actually matter when chasing a playback bug — are always forced to
-    // at least debug. This is a floor, not a ceiling: setting LOG_LEVEL to
-    // something louder (e.g. "trace") still raises these further.
+    // LOG_LEVEL sets the baseline (keeps noisy deps like h2/rustls quiet),
+    // but pyxeebot/songbird/symphonia are always at least "debug" since
+    // those are what matters when chasing a playback bug.
     let base = if config.log_level.trim().is_empty() {
         "info"
     } else {
@@ -92,11 +87,9 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
     let fallback = "info,pyxeebot=debug,songbird=debug,symphonia_core=debug,symphonia=debug";
     let filter = EnvFilter::try_new(&directive_str).or_else(|_| EnvFilter::try_new(fallback))?;
 
-    // Always emit to stdout — under systemd (Type=simple) this is captured
-    // by journalctl automatically (`journalctl -u pyxeebotr -f`), so verbose
-    // diagnostics are never gated behind remembering to tail a file. If
-    // LOG_TO_FILE is also set, the file becomes a second destination rather
-    // than the only one.
+    // Always emit to stdout too (captured by journalctl under systemd), so
+    // logs aren't gated behind remembering to tail a file. LOG_TO_FILE adds
+    // a second destination rather than replacing this one.
     let stdout_layer = fmt::layer().with_ansi(false);
     let registry = tracing_subscriber::registry()
         .with(filter)
@@ -172,12 +165,9 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                 // for the actual audio stream download, which is a long-lived
                 // request that must not be cut off partway through.
                 let http_client = reqwest::Client::new();
-                // Separate, timeout-bounded client for Last.fm/lyrics lookups.
-                // These are awaited directly inside PlayerActor::handle() (e.g.
-                // try_autoplay), which processes commands for a guild serially —
-                // sharing the untimed client above meant a stalled Last.fm/lyrics
-                // request could hang that guild's entire player (no skip/stop/
-                // play would be processed) until the request eventually resolved.
+                // Timeout-bounded client for Last.fm/lyrics — these are awaited
+                // inline in the actor's serial command loop, so an untimed
+                // request could hang a whole guild's player.
                 let api_http_client = reqwest::Client::builder()
                     .timeout(Duration::from_secs(10))
                     .build()?;
@@ -276,11 +266,9 @@ async fn restore_queues(data: Arc<BotData>) {
     }
 }
 
-/// Polls the extractor's consecutive-resolve-failure streak and DMs the bot
-/// owners once when it crosses the threshold — a streak this long usually
-/// means the cookies/PO-token setup broke, not that a few videos were bad.
-/// Alerts once per streak, not every poll, and re-arms once a resolve
-/// succeeds again.
+/// Polls the extractor's failure streak and DMs bot owners once it crosses
+/// the threshold (likely a broken cookie/PO-token setup, not bad videos).
+/// Alerts once per streak, re-arming after the next successful resolve.
 async fn watch_resolve_failures(data: Arc<BotData>, http: Arc<serenity::Http>) {
     const CHECK_INTERVAL: Duration = Duration::from_secs(60);
     const FAILURE_THRESHOLD: u32 = 5;

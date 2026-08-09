@@ -110,10 +110,9 @@ impl Extractor {
         Ok(entries)
     }
 
-    /// Extracts metadata for a direct URL (no search/ranking involved).
-    /// `flat_playlist` only affects listing depth for a single video — it
-    /// does not expand a playlist URL, since `--no-playlist` is always
-    /// passed here too. Use `extract_playlist` for that.
+    /// Extracts metadata for a direct URL (no search/ranking). Always
+    /// passes `--no-playlist`, so a playlist URL never expands here —
+    /// use `extract_playlist` for that.
     pub async fn extract_url(
         &self,
         url: &str,
@@ -138,10 +137,9 @@ impl Extractor {
         Ok(tracks)
     }
 
-    /// Lists every entry of a genuine playlist URL (not a single video that
-    /// incidentally carries a `list=` param — callers decide that upstream).
-    /// Doesn't count toward the resolve-failure streak: a listing call isn't
-    /// the same signal as a per-video extraction failing.
+    /// Lists every entry of a genuine playlist URL (callers decide that
+    /// upstream). Doesn't count toward the resolve-failure streak, since a
+    /// listing call failing isn't the same signal as a video failing.
     pub async fn extract_playlist(
         &self,
         url: &str,
@@ -328,10 +326,9 @@ fn resolved_info_from_json(item: &Value) -> Result<ResolvedInfo> {
     })
 }
 
-/// Pulls yt-dlp's `http_headers` object (from `--dump-json`) into a plain
-/// list of pairs. Some CDNs (YouTube included) reject the stream without
-/// these — e.g. a matching `User-Agent` — so they need to ride along with
-/// the resolved URL into songbird's `HttpRequest`.
+/// Pulls yt-dlp's `http_headers` into a plain list of pairs. Some CDNs
+/// (YouTube included) reject the stream without these (e.g. a matching
+/// User-Agent), so they ride along into songbird's `HttpRequest`.
 fn headers_from_json(item: &Value) -> Vec<(String, String)> {
     item.get("http_headers")
         .and_then(Value::as_object)

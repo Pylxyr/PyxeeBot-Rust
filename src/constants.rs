@@ -151,3 +151,9 @@ pub const SEARCH_CURATION_EXTRA_PHRASES: &[&str] = &[
 
 /// Preferred format string passed to yt-dlp via --format.
 pub const YTDLP_FORMAT: &str = "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best[height<=480]";
+
+/// Fallback format for a client-override retry. Alternate player clients
+/// (e.g. "android") expose a smaller format list than the default, so
+/// reusing YTDLP_FORMAT there fails instantly with "Requested format is
+/// not available" instead of giving the retry any chance to succeed.
+pub const YTDLP_RETRY_FORMAT: &str = "bestaudio/best";

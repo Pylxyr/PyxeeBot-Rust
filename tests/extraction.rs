@@ -85,6 +85,32 @@ fn extract_args_adds_pot_provider_when_configured() {
 }
 
 #[test]
+fn extract_args_uses_default_format_without_client_override() {
+    let config = test_config();
+    let args = extract_args(&config, "https://example.com/video", false, None);
+    let idx = args.iter().position(|a| a == "--format").unwrap();
+    assert_eq!(args[idx + 1], pyxeebot::constants::YTDLP_FORMAT);
+}
+
+#[test]
+fn extract_args_relaxes_format_with_client_override() {
+    // Regression test: a client-override retry using YTDLP_FORMAT's strict
+    // ext/height filter fails instantly with "Requested format is not
+    // available" — alternate clients expose a smaller format list, so the
+    // retry needs a relaxed, client-agnostic fallback instead.
+    let config = test_config();
+    let args = extract_args(
+        &config,
+        "https://example.com/video",
+        false,
+        Some("android"),
+    );
+    let idx = args.iter().position(|a| a == "--format").unwrap();
+    assert_eq!(args[idx + 1], pyxeebot::constants::YTDLP_RETRY_FORMAT);
+    assert_ne!(args[idx + 1], pyxeebot::constants::YTDLP_FORMAT);
+}
+
+#[test]
 fn search_args_builds_ytsearch_target() {
     let config = test_config();
     let args = search_args(&config, "some query", 5);

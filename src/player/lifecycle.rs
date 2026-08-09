@@ -7,9 +7,7 @@ use tokio::sync::Mutex;
 use crate::errors::{BotError, Result};
 
 /// Joins (or switches to) the given voice channel. Songbird's manager
-/// transparently reuses an existing `Call` or creates one as needed, and
-/// switches channel if already connected elsewhere in this guild — there is
-/// no separate "stale client" cleanup step required here.
+/// reuses or creates the `Call` as needed — no separate cleanup required.
 pub async fn connect(
     songbird: &Songbird,
     guild_id: GuildId,

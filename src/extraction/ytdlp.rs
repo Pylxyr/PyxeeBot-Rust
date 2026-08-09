@@ -7,27 +7,29 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::config::Config;
-use crate::constants::YTDLP_FORMAT;
+use crate::constants::{YTDLP_FORMAT, YTDLP_RETRY_FORMAT};
 use crate::errors::{BotError, Result};
 
-/// Builds the yt-dlp argument list for extracting metadata (no download).
-/// A pure function so it's testable without ever spawning a process.
-/// `client_override` picks a specific YouTube player client (e.g. "android")
-/// instead of yt-dlp's default — used to retry with a different client when
-/// the first extraction attempt fails, since some bot-detection failures
-/// are specific to one client and clear up with another.
+/// Builds the yt-dlp metadata-extraction args — a pure function so it's
+/// testable without spawning a process. `client_override` retries with a
+/// different YouTube player client when bot-detection blocks the default.
 pub fn extract_args(
     config: &Config,
     query_or_url: &str,
     flat_playlist: bool,
     client_override: Option<&str>,
 ) -> Vec<String> {
+    let format = if client_override.is_some() {
+        YTDLP_RETRY_FORMAT
+    } else {
+        YTDLP_FORMAT
+    };
     let mut args = vec![
         "--dump-json".to_owned(),
         "--no-warnings".to_owned(),
         "--no-playlist".to_owned(),
         "--format".to_owned(),
-        YTDLP_FORMAT.to_owned(),
+        format.to_owned(),
         "--socket-timeout".to_owned(),
         config.ytdlp_socket_timeout.to_string(),
     ];
@@ -61,24 +63,17 @@ pub fn extract_args(
     args
 }
 
-/// Builds the yt-dlp argument list for a `ytsearchN:` style text search.
-/// Uses `--flat-playlist` — search only needs enough metadata to rank
-/// candidates (title/uploader/description/view_count/upload_date/etc, all
-/// of which YouTube's search results carry inline), not a full per-video
-/// extraction. Only the single track that actually gets played pays for a
-/// full extraction, in `Extractor::resolve_stream`. This mirrors the Python
-/// bot's `extract_flat=True` search behaviour, which already does this.
+/// Builds args for a `ytsearchN:` text search. Uses `--flat-playlist` since
+/// ranking only needs the metadata search results carry inline — full
+/// per-video extraction only happens for whichever track actually plays.
 pub fn search_args(config: &Config, query: &str, count: usize) -> Vec<String> {
     let search_target = format!("ytsearch{count}:{query}");
     extract_args(config, &search_target, true, None)
 }
 
-/// Lists every entry of an actual playlist URL. Deliberately not built on
-/// `extract_args`: that always passes `--no-playlist`, which is exactly what
-/// stops a playlist link from expanding — needed there so a video URL that
-/// incidentally carries a `list=` param (autoplay mixes do this constantly)
-/// still plays just that one video. This is only called once the caller has
-/// already decided the URL is a playlist page, not a single video.
+/// Lists every entry of an actual playlist URL. Not built on `extract_args`,
+/// since that always passes `--no-playlist` (needed there so a video with
+/// an incidental `list=` param still plays as one video, not a playlist).
 pub fn extract_playlist_args(config: &Config, playlist_url: &str) -> Vec<String> {
     let mut args = vec![
         "--dump-json".to_owned(),

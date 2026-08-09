@@ -34,10 +34,9 @@ impl LyricsClient {
         Self { http_client }
     }
 
-    // Resolves free text to a (artist, title) pair via lyrics.ovh's
-    // Deezer-backed suggest endpoint, rather than guessing by splitting a
-    // YouTube title ourselves — those come in too many shapes to parse
-    // reliably ("Artist - Song", "Song by Artist", "『Song』/Artist"...).
+    // Resolves free text to (artist, title) via lyrics.ovh's suggest
+    // endpoint, rather than guessing by splitting a YouTube title — those
+    // come in too many shapes to parse reliably.
     async fn suggest(&self, query: &str) -> anyhow::Result<Option<(String, String)>> {
         let url = format!("{API_BASE}/suggest/{}", encode_path_segment(query));
         let response: SuggestResponse = self
