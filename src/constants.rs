@@ -157,8 +157,8 @@ pub const SEARCH_CURATION_EXTRA_PHRASES: &[&str] = &[
 pub const YTDLP_FORMAT: &str = "bestaudio[protocol!*=m3u8][ext=webm]/bestaudio[protocol!*=m3u8][ext=m4a]/bestaudio[protocol!*=m3u8]/best[protocol!*=m3u8][height<=480]";
 
 /// Fallback format for a client-override retry. Alternate player clients
-/// (e.g. "android") expose a smaller format list than the default, so
-/// reusing YTDLP_FORMAT there fails instantly with "Requested format is
-/// not available" instead of giving the retry any chance to succeed.
-/// Still excludes HLS formats for the same reason as YTDLP_FORMAT.
+/// (e.g. "tv") can expose a smaller format list than the default, so
+/// reusing YTDLP_FORMAT there risks failing instantly with "Requested
+/// format is not available" instead of giving the retry any chance to
+/// succeed. Still excludes HLS formats for the same reason as YTDLP_FORMAT.
 pub const YTDLP_RETRY_FORMAT: &str = "bestaudio[protocol!*=m3u8]/best[protocol!*=m3u8]";
