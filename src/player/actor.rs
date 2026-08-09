@@ -555,14 +555,6 @@ impl PlayerActor {
         if self.call.is_none() || self.channel_id != Some(channel_id) {
             tracing::info!(guild_id = %self.guild_id, channel_id = %channel_id, "handle_play: connecting to voice channel");
             let connect_start = std::time::Instant::now();
-            // Speculative cache warm, fired and forgotten (the resolve
-            // below will hit cache once it lands). Not awaited — that yt-dlp
-            // time is exactly what used to block a guild's first !play.
-            let extractor = self.extractor.clone();
-            let speculative = track.clone();
-            tokio::spawn(async move {
-                let _ = extractor.resolve_stream(&speculative, None).await;
-            });
             let call = match lifecycle::connect(&self.songbird, self.guild_id, channel_id).await {
                 Ok(call) => call,
                 Err(e) => {
