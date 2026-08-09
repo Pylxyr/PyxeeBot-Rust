@@ -314,16 +314,37 @@ fn resolved_info_from_json(item: &Value) -> Result<ResolvedInfo> {
     let stream_url = value_str(item, "url")
         .ok_or_else(|| BotError::YtDlp("yt-dlp response had no playable url".to_owned()))?
         .to_owned();
+    let reported_length = item
+        .get("filesize")
+        .and_then(Value::as_u64)
+        .or_else(|| item.get("filesize_approx").and_then(Value::as_u64));
+    let duration_secs = item.get("duration").and_then(Value::as_f64);
     Ok(ResolvedInfo {
         stream_url,
         acodec: value_str(item, "acodec").unwrap_or("").to_owned(),
         abr: item.get("abr").and_then(Value::as_f64).unwrap_or(0.0),
         headers: headers_from_json(item),
-        content_length: item
-            .get("filesize")
-            .and_then(Value::as_u64)
-            .or_else(|| item.get("filesize_approx").and_then(Value::as_u64)),
+        content_length: sanitize_content_length(reported_length, duration_secs),
     })
+}
+
+/// Discards a reported filesize/filesize_approx that's implausibly small
+/// for the track's duration, instead of handing songbird a bound that
+/// would truncate a real stream partway through. Passes the value through
+/// unchanged when duration is unknown — there's nothing to check it against.
+fn sanitize_content_length(reported: Option<u64>, duration_secs: Option<f64>) -> Option<u64> {
+    let bytes = reported?;
+    let Some(duration) = duration_secs.filter(|d| *d > 0.0) else {
+        return Some(bytes);
+    };
+    // 8 kbps floor: nothing claiming to be a real audio stream is slower
+    // than this, so anything under it is a bogus estimate, not a real file.
+    const MIN_BYTES_PER_SEC: f64 = 8_000.0 / 8.0;
+    if (bytes as f64) < duration * MIN_BYTES_PER_SEC {
+        None
+    } else {
+        Some(bytes)
+    }
 }
 
 /// Pulls yt-dlp's `http_headers` into a plain list of pairs. Some CDNs
@@ -387,5 +408,30 @@ mod tests {
     fn resolved_info_missing_url_is_an_error() {
         let item = serde_json::json!({ "acodec": "opus" });
         assert!(resolved_info_from_json(&item).is_err());
+    }
+
+    #[test]
+    fn resolved_info_discards_implausibly_small_filesize_for_duration() {
+        // Regression test: a 3-minute track reporting ~58KB implies well
+        // under 8kbps — physically implausible for real audio, and a sign
+        // yt-dlp's filesize_approx estimate is bad for this format/client.
+        let item = serde_json::json!({
+            "url": "https://example.com/stream",
+            "duration": 180,
+            "filesize_approx": 58_038,
+        });
+        let resolved = resolved_info_from_json(&item).expect("valid item resolves");
+        assert_eq!(resolved.content_length, None);
+    }
+
+    #[test]
+    fn resolved_info_keeps_plausible_filesize_for_duration() {
+        let item = serde_json::json!({
+            "url": "https://example.com/stream",
+            "duration": 180,
+            "filesize": 3_000_000,
+        });
+        let resolved = resolved_info_from_json(&item).expect("valid item resolves");
+        assert_eq!(resolved.content_length, Some(3_000_000));
     }
 }
