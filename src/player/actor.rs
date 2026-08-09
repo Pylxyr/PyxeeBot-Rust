@@ -740,8 +740,11 @@ impl PlayerActor {
         let title = track.title.clone();
         // On a retry, try a different YouTube player client — some
         // bot-detection failures are specific to the default client and
-        // clear up with another, so this isn't just repeating what failed.
-        let client_override = self.retried_current_track.then_some("android");
+        // clear up with another. Not "android": in production, every
+        // android retry failed with "no format available" (it only
+        // exposed HLS formats for this account/session), so it never
+        // once actually helped.
+        let client_override = self.retried_current_track.then_some("tv");
         tracing::info!(%guild_id, %title, generation, retry = self.retried_current_track, "spawn_resolve_for_current: resolving in background");
         tokio::spawn(async move {
             let result = extractor.resolve_stream(&track, client_override).await;
