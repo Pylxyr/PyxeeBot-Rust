@@ -8,6 +8,14 @@ use crate::models::{LoopMode, Track};
 
 const MAX_HISTORY: usize = 50;
 
+/// Outcome of a permission-checked queue removal (see `remove_if_allowed`).
+#[derive(Debug)]
+pub enum RemoveOutcome {
+    Removed(Track),
+    NotFound,
+    NotAllowed,
+}
+
 pub struct PlayerState {
     pub queue: VecDeque<Track>,
     pub history: Vec<Track>,
@@ -123,9 +131,7 @@ impl PlayerState {
     }
 
     pub fn shuffle(&mut self) {
-        self.queue
-            .make_contiguous()
-            .shuffle(&mut rand::thread_rng());
+        self.queue.make_contiguous().shuffle(&mut rand::rng());
     }
 
     pub fn remove(&mut self, position: usize) -> Option<Track> {
@@ -134,6 +140,31 @@ impl PlayerState {
             self.total_duration -= t.duration;
         }
         track
+    }
+
+    /// Removes the track at `position` only if `requester_id` is the one
+    /// who queued it, or `is_dj` is true. The permission check and the
+    /// removal happen together here, inside the actor's exclusive access to
+    /// this state — the caller no longer has to snapshot the queue to check
+    /// who requested a track and then remove it in a second step, which
+    /// left a window for the queue to change in between (e.g. another
+    /// removal shifting positions) and could act on stale ownership info.
+    pub fn remove_if_allowed(
+        &mut self,
+        position: usize,
+        requester_id: u64,
+        is_dj: bool,
+    ) -> RemoveOutcome {
+        let Some(track) = self.queue.get(position) else {
+            return RemoveOutcome::NotFound;
+        };
+        if !is_dj && track.requester_id != requester_id {
+            return RemoveOutcome::NotAllowed;
+        }
+        match self.remove(position) {
+            Some(track) => RemoveOutcome::Removed(track),
+            None => RemoveOutcome::NotFound,
+        }
     }
 
     pub fn move_track(&mut self, from: usize, to: usize) -> bool {
@@ -152,8 +183,14 @@ impl PlayerState {
     /// check the Python version was missing — `_disconnect_when_empty` had
     /// no `stay_connected` guard, so `!stay` was ignored once every human
     /// left the channel.
-    pub fn should_disconnect_when_empty(&self, has_human_listeners: bool) -> bool {
-        !self.stay_connected && !has_human_listeners
+    ///
+    /// By the time this fires, the actor has already relied on
+    /// `events.rs` to have sent `CancelEmptyDisconnect` if a human rejoined
+    /// the channel before the timer elapsed — the player itself has no way
+    /// to re-check current voice-channel occupancy, so `stay_connected` is
+    /// the only thing left to consult here.
+    pub fn should_disconnect_when_empty(&self) -> bool {
+        !self.stay_connected
     }
 
     /// Whether an idle disconnect (nothing playing, nothing queued) should

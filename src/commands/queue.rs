@@ -1,5 +1,6 @@
 use super::helpers::require_dj;
 use crate::bot::Context;
+use crate::player::RemoveOutcome;
 
 /// Show the current queue.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("q"))]
@@ -109,23 +110,23 @@ pub async fn remove(ctx: Context<'_>, position: usize) -> anyhow::Result<()> {
         return Ok(());
     }
     let player = ctx.data().player_for(guild_id).await;
-    let snapshot = player.snapshot();
-    let is_requester = snapshot
-        .queue
-        .get(position - 1)
-        .is_some_and(|t| t.requester_id == ctx.author().id.get());
-    if !is_requester && !super::helpers::is_dj(ctx).await {
-        ctx.say("Only the requester or a DJ can remove this track.")
-            .await?;
-        return Ok(());
-    }
-    match player.remove_track(position - 1).await {
-        Some(track) => {
+    let is_dj = super::helpers::is_dj(ctx).await;
+    match player
+        .remove_track(position - 1, ctx.author().id.get(), is_dj)
+        .await
+    {
+        RemoveOutcome::Removed(track) => {
             ctx.say(format!("Removed **{}**.", track.escaped_title()))
-                .await?
+                .await?;
         }
-        None => ctx.say("Invalid position.").await?,
-    };
+        RemoveOutcome::NotFound => {
+            ctx.say("Invalid position.").await?;
+        }
+        RemoveOutcome::NotAllowed => {
+            ctx.say("Only the requester or a DJ can remove this track.")
+                .await?;
+        }
+    }
     Ok(())
 }
 

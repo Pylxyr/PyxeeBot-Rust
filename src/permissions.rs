@@ -39,7 +39,9 @@ fn has_manage_channels(cache: &Cache, guild_id: GuildId, channel_id: ChannelId, 
         .contains(Permissions::MANAGE_CHANNELS)
 }
 
-/// True if the bot isn't connected anywhere.
+/// Whether `user_id` is in the same voice channel as the bot. Vacuously
+/// true if the bot isn't currently connected to any channel — there's
+/// nothing to be "in the same channel" as, so this imposes no restriction.
 pub fn in_same_voice_channel(
     cache: &Cache,
     guild_id: GuildId,

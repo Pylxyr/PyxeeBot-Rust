@@ -70,7 +70,9 @@ pub enum PlayerCommand {
     Shuffle,
     RemoveTrack {
         position: usize,
-        reply: oneshot::Sender<Option<Track>>,
+        requester_id: u64,
+        is_dj: bool,
+        reply: oneshot::Sender<super::queue::RemoveOutcome>,
     },
     MoveTrack {
         from: usize,
@@ -451,10 +453,17 @@ impl PlayerActor {
                 self.state.shuffle();
                 self.spawn_prefetch();
             }
-            PlayerCommand::RemoveTrack { position, reply } => {
-                let removed = self.state.remove(position);
-                self.spawn_prefetch();
-                let _ = reply.send(removed);
+            PlayerCommand::RemoveTrack {
+                position,
+                requester_id,
+                is_dj,
+                reply,
+            } => {
+                let outcome = self.state.remove_if_allowed(position, requester_id, is_dj);
+                if matches!(outcome, super::queue::RemoveOutcome::Removed(_)) {
+                    self.spawn_prefetch();
+                }
+                let _ = reply.send(outcome);
             }
             PlayerCommand::MoveTrack { from, to, reply } => {
                 let ok = self.state.move_track(from, to);
@@ -517,7 +526,7 @@ impl PlayerActor {
                 self.empty_timer = None;
                 // The exact regression fix from the Python bug hunt: honour
                 // stay_connected before disconnecting on an empty channel.
-                if self.state.should_disconnect_when_empty(false) {
+                if self.state.should_disconnect_when_empty() {
                     self.resolve_pending_play(false, false);
                     if let Some(handle) = self.current_handle.take() {
                         let _ = handle.stop();

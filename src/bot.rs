@@ -168,12 +168,24 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     .await
                     .expect("songbird manager not registered");
                 let extractor = Arc::new(Extractor::new(setup_config.clone()));
+                // Deliberately timeout-free: this client is handed to songbird
+                // for the actual audio stream download, which is a long-lived
+                // request that must not be cut off partway through.
                 let http_client = reqwest::Client::new();
+                // Separate, timeout-bounded client for Last.fm/lyrics lookups.
+                // These are awaited directly inside PlayerActor::handle() (e.g.
+                // try_autoplay), which processes commands for a guild serially —
+                // sharing the untimed client above meant a stalled Last.fm/lyrics
+                // request could hang that guild's entire player (no skip/stop/
+                // play would be processed) until the request eventually resolved.
+                let api_http_client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(10))
+                    .build()?;
                 let lastfm = setup_config
                     .lastfm_api_key
                     .clone()
-                    .map(|key| LastFmClient::new(key, http_client.clone()));
-                let lyrics = crate::lyrics::LyricsClient::new(http_client.clone());
+                    .map(|key| LastFmClient::new(key, api_http_client.clone()));
+                let lyrics = crate::lyrics::LyricsClient::new(api_http_client);
 
                 let data = Arc::new(BotData {
                     config: setup_config,

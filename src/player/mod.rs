@@ -10,7 +10,7 @@ use songbird::Songbird;
 use tokio::sync::{oneshot, watch};
 
 pub use actor::PlayOutcome;
-pub use queue::PlayerState;
+pub use queue::{PlayerState, RemoveOutcome};
 pub use snapshot::PlayerSnapshot;
 
 use crate::config::Config;
@@ -156,10 +156,20 @@ impl GuildPlayer {
         self.send(PlayerCommand::Shuffle);
     }
 
-    pub async fn remove_track(&self, position: usize) -> Option<Track> {
+    pub async fn remove_track(
+        &self,
+        position: usize,
+        requester_id: u64,
+        is_dj: bool,
+    ) -> RemoveOutcome {
         let (reply, rx) = oneshot::channel();
-        self.send(PlayerCommand::RemoveTrack { position, reply });
-        rx.await.ok().flatten()
+        self.send(PlayerCommand::RemoveTrack {
+            position,
+            requester_id,
+            is_dj,
+            reply,
+        });
+        rx.await.unwrap_or(RemoveOutcome::NotFound)
     }
 
     pub async fn move_track(&self, from: usize, to: usize) -> bool {

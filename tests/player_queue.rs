@@ -155,10 +155,9 @@ fn requeue_finished_loop_off_drops_the_track() {
 fn should_disconnect_when_empty_honours_stay_connected() {
     let mut state = PlayerState::new(10, false, false);
     state.stay_connected = true;
-    assert!(!state.should_disconnect_when_empty(false));
+    assert!(!state.should_disconnect_when_empty());
     state.stay_connected = false;
-    assert!(state.should_disconnect_when_empty(false));
-    assert!(!state.should_disconnect_when_empty(true));
+    assert!(state.should_disconnect_when_empty());
 }
 
 #[test]

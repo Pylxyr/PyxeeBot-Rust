@@ -269,13 +269,14 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
     Ok(())
 }
 
-/// Skip the current track.
+/// Skip the current track immediately. DJs only — everyone else should use
+/// `!voteskip`, otherwise this would let any listener bypass the vote.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("s"))]
 pub async fn skip(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
-    if !super::helpers::require_same_voice_channel(ctx).await? {
+    if !super::helpers::require_dj(ctx).await? {
         return Ok(());
     }
     ctx.data().player_for(guild_id).await.skip();
