@@ -552,22 +552,6 @@ impl PlayerActor {
     ) {
         tracing::info!(guild_id = %self.guild_id, title = %track.title, front, "handle_play: received");
 
-        if self.call.is_none() || self.channel_id != Some(channel_id) {
-            tracing::info!(guild_id = %self.guild_id, channel_id = %channel_id, "handle_play: connecting to voice channel");
-            let connect_start = std::time::Instant::now();
-            let call = match lifecycle::connect(&self.songbird, self.guild_id, channel_id).await {
-                Ok(call) => call,
-                Err(e) => {
-                    let _ = reply.send(Err(e));
-                    return;
-                }
-            };
-            tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect finished");
-            self.call = Some(call);
-            self.channel_id = Some(channel_id);
-            self.persist_last_voice_channel(Some(channel_id));
-        }
-
         if self.state.is_full() {
             tracing::warn!(guild_id = %self.guild_id, "handle_play: queue is full");
             let _ = reply.send(Err(BotError::QueueFull));
@@ -582,6 +566,8 @@ impl PlayerActor {
             return;
         }
 
+        let was_idle = self.state.current.is_none();
+
         if front {
             self.state.push_front(track);
         } else {
@@ -589,21 +575,35 @@ impl PlayerActor {
         }
         let position = if front { 1 } else { self.state.queue.len() };
 
-        if self.state.current.is_none() {
+        if was_idle {
             tracing::info!(guild_id = %self.guild_id, "handle_play: nothing currently playing, advancing queue");
             self.cancel_idle_timer();
             self.retried_current_track = false;
-            if self.state.advance().is_some() {
-                self.pending_play_reply = Some((reply, position));
-                self.spawn_resolve_for_current();
-            } else {
+            if self.state.advance().is_none() {
                 let _ = reply.send(Ok(PlayOutcome {
                     position,
                     now_playing: false,
                     failed: true,
                 }));
+                tracing::info!(guild_id = %self.guild_id, "handle_play: done");
+                return;
+            }
+            self.pending_play_reply = Some((reply, position));
+            self.spawn_resolve_for_current();
+
+            if let Err(e) = self.ensure_connected(channel_id).await {
+                tracing::warn!(guild_id = %self.guild_id, "handle_play: voice connect failed, discarding in-flight resolve");
+                self.current_generation += 1;
+                self.state.current = None;
+                if let Some((reply, _)) = self.pending_play_reply.take() {
+                    let _ = reply.send(Err(e));
+                }
             }
         } else {
+            if let Err(e) = self.ensure_connected(channel_id).await {
+                let _ = reply.send(Err(e));
+                return;
+            }
             self.spawn_prefetch();
             let _ = reply.send(Ok(PlayOutcome {
                 position,
@@ -613,6 +613,22 @@ impl PlayerActor {
         }
 
         tracing::info!(guild_id = %self.guild_id, "handle_play: done");
+    }
+
+    /// Connects (or reconnects, if switching channels) if needed. A no-op
+    /// if already connected to the requested channel.
+    async fn ensure_connected(&mut self, channel_id: ChannelId) -> Result<()> {
+        if self.call.is_some() && self.channel_id == Some(channel_id) {
+            return Ok(());
+        }
+        tracing::info!(guild_id = %self.guild_id, channel_id = %channel_id, "handle_play: connecting to voice channel");
+        let connect_start = std::time::Instant::now();
+        let call = lifecycle::connect(&self.songbird, self.guild_id, channel_id).await?;
+        tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect finished");
+        self.call = Some(call);
+        self.channel_id = Some(channel_id);
+        self.persist_last_voice_channel(Some(channel_id));
+        Ok(())
     }
 
     /// Answers a `!play` that's waiting on the first track's background
