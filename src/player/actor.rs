@@ -740,6 +740,14 @@ impl PlayerActor {
             return;
         };
         self.cancel_idle_timer();
+        // Prefetch may already be mid-resolve on this exact URL (it just
+        // got promoted from an upcoming queue slot) or on other upcoming
+        // tracks that no longer matter as urgently — either way, don't
+        // let it compete with the resolve that's actually gating playback
+        // right now. It'll naturally re-fire once something's playing.
+        if let Some(handle) = self.prefetch_task.take() {
+            handle.abort();
+        }
         self.current_generation += 1;
         let generation = self.current_generation;
         let extractor = self.extractor.clone();
