@@ -740,11 +740,7 @@ impl PlayerActor {
             return;
         };
         self.cancel_idle_timer();
-        // Prefetch may already be mid-resolve on this exact URL (it just
-        // got promoted from an upcoming queue slot) or on other upcoming
-        // tracks that no longer matter as urgently — either way, don't
-        // let it compete with the resolve that's actually gating playback
-        // right now. It'll naturally re-fire once something's playing.
+        // Don't let a stale prefetch compete with this resolve.
         if let Some(handle) = self.prefetch_task.take() {
             handle.abort();
         }
@@ -754,12 +750,7 @@ impl PlayerActor {
         let self_tx = self.self_tx.clone();
         let guild_id = self.guild_id;
         let title = track.title.clone();
-        // On a retry, try a different YouTube player client — some
-        // bot-detection failures are specific to the default client and
-        // clear up with another. Not "android": in production, every
-        // android retry failed with "no format available" (it only
-        // exposed HLS formats for this account/session), so it never
-        // once actually helped.
+        // Not "android" — it only ever gave us HLS-only formats.
         let client_override = self.retried_current_track.then_some("tv");
         tracing::info!(%guild_id, %title, generation, retry = self.retried_current_track, "spawn_resolve_for_current: resolving in background");
         tokio::spawn(async move {

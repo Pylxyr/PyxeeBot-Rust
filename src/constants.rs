@@ -149,16 +149,8 @@ pub const SEARCH_CURATION_EXTRA_PHRASES: &[&str] = &[
 
 // ── Audio (Songbird / yt-dlp) ─────────────────────────────────────────────────
 
-/// Preferred format string passed to yt-dlp via --format. Excludes HLS
-/// (m3u8) formats: songbird's HttpRequest fetches one URL as a raw byte
-/// range, and an HLS manifest is a short text file of segment links, not
-/// playable media — feeding it straight through downloads that manifest
-/// as if it were the whole file and fails almost immediately.
+/// Excludes HLS (m3u8): songbird can't stream a manifest as raw bytes.
 pub const YTDLP_FORMAT: &str = "bestaudio[protocol!*=m3u8][ext=webm]/bestaudio[protocol!*=m3u8][ext=m4a]/bestaudio[protocol!*=m3u8]/best[protocol!*=m3u8][height<=480]";
 
-/// Fallback format for a client-override retry. Alternate player clients
-/// (e.g. "tv") can expose a smaller format list than the default, so
-/// reusing YTDLP_FORMAT there risks failing instantly with "Requested
-/// format is not available" instead of giving the retry any chance to
-/// succeed. Still excludes HLS formats for the same reason as YTDLP_FORMAT.
+/// Relaxed format for a client-override retry (avoids "format not available").
 pub const YTDLP_RETRY_FORMAT: &str = "bestaudio[protocol!*=m3u8]/best[protocol!*=m3u8]";

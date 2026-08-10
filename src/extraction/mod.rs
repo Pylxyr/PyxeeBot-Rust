@@ -328,10 +328,8 @@ fn resolved_info_from_json(item: &Value) -> Result<ResolvedInfo> {
     })
 }
 
-/// Discards a reported filesize/filesize_approx that's implausibly small
-/// for the track's duration, instead of handing songbird a bound that
-/// would truncate a real stream partway through. Passes the value through
-/// unchanged when duration is unknown — there's nothing to check it against.
+/// Discards a filesize/filesize_approx that's implausibly small for the
+/// duration, rather than handing songbird a bound that truncates playback.
 fn sanitize_content_length(reported: Option<u64>, duration_secs: Option<f64>) -> Option<u64> {
     let bytes = reported?;
     let Some(duration) = duration_secs.filter(|d| *d > 0.0) else {
