@@ -1,7 +1,6 @@
 use crate::bot::Context;
 
-/// DJ = has the configured DJ role, or Manage Channels, or is a bot owner.
-/// Mirrors the Python bot's `_require_dj` check.
+/// DJ = has the configured DJ role, or Manage Channels, or is a bot owner (mirrors Python's `_require_dj`).
 pub async fn is_dj(ctx: Context<'_>) -> bool {
     let Some(guild_id) = ctx.guild_id() else {
         return false;

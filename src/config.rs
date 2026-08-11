@@ -45,8 +45,7 @@ impl Config {
         let data_dir = base_dir.join("data");
         std::fs::create_dir_all(&data_dir)?;
 
-        // yt-dlp's default ~/.cache/yt-dlp is blocked by ProtectHome=read-only,
-        // silently disabling its signature-cache. Point it here instead.
+        // Default ~/.cache/yt-dlp is blocked by ProtectHome=read-only; point it here instead.
         let ytdlp_cache_dir = data_dir.join("ytdlp-cache");
         std::fs::create_dir_all(&ytdlp_cache_dir)?;
 

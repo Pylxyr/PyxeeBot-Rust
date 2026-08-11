@@ -61,8 +61,7 @@ fn extract_args_flat_playlist_adds_flag() {
 
 #[test]
 fn extract_args_always_sets_cache_dir() {
-    // yt-dlp's default cache dir is blocked by ProtectHome=read-only;
-    // --cache-dir must always point at config.ytdlp_cache_dir instead.
+    // Default cache dir is blocked by ProtectHome=read-only; must use config.ytdlp_cache_dir instead.
     let config = test_config();
     let args = extract_args(&config, "https://example.com/video", false, None);
     let idx = args.iter().position(|a| a == "--cache-dir").unwrap();
@@ -94,10 +93,7 @@ fn extract_args_uses_default_format_without_client_override() {
 
 #[test]
 fn extract_args_relaxes_format_with_client_override() {
-    // Regression test: a client-override retry using YTDLP_FORMAT's strict
-    // ext/height filter fails instantly with "Requested format is not
-    // available" — alternate clients expose a smaller format list, so the
-    // retry needs a relaxed, client-agnostic fallback instead.
+    // Regression: a client-override retry needs a relaxed, client-agnostic format fallback.
     let config = test_config();
     let args = extract_args(
         &config,
@@ -119,10 +115,7 @@ fn search_args_builds_ytsearch_target() {
 
 #[test]
 fn search_args_uses_flat_playlist() {
-    // Search only needs listing metadata to rank candidates — the full
-    // per-video extraction (format resolution, headers, JS-challenge
-    // solving) is deferred to resolve_stream() for whichever single track
-    // actually gets played. See extraction::ytdlp::search_args' doc comment.
+    // Search only needs listing metadata; full extraction is deferred to resolve_stream().
     let config = test_config();
     let args = search_args(&config, "some query", 5);
     assert!(args.contains(&"--flat-playlist".to_owned()));

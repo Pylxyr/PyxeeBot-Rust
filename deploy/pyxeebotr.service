@@ -14,6 +14,12 @@ Restart=on-failure
 RestartSec=5
 EnvironmentFile=/home/ubuntu/pyxeebotr/.env
 
+# Resource bounds for a 1GB box — cgroup covers yt-dlp/ffmpeg children too.
+MemoryHigh=650M
+MemoryMax=800M
+TasksMax=256
+LimitNOFILE=4096
+
 # Hardening
 NoNewPrivileges=true
 PrivateTmp=true
@@ -21,6 +27,19 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/ubuntu/pyxeebotr/data /home/ubuntu/pyxeebotr/logs
 CapabilityBoundingSet=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+# No MemoryDenyWriteExecute: yt-dlp may exec a JS runtime for signature solving, which needs JIT.
 
 [Install]
 WantedBy=multi-user.target

@@ -83,8 +83,7 @@ fn rank_entries_empty_input_returns_empty() {
 
 #[test]
 fn rank_entries_ties_keep_original_order() {
-    // Two identical candidates: score is identical, so original order (by
-    // input index) must be preserved rather than reordered arbitrarily.
+    // Tied scores must preserve original input order, not reorder arbitrarily.
     let entries = vec![
         candidate("Same Title", "Same Uploader", 200, 100),
         candidate("Same Title", "Same Uploader", 200, 100),

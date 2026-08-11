@@ -34,9 +34,7 @@ impl LyricsClient {
         Self { http_client }
     }
 
-    // Resolves free text to (artist, title) via lyrics.ovh's suggest
-    // endpoint, rather than guessing by splitting a YouTube title — those
-    // come in too many shapes to parse reliably.
+    // Uses lyrics.ovh's suggest endpoint rather than guessing by splitting a YouTube title.
     async fn suggest(&self, query: &str) -> anyhow::Result<Option<(String, String)>> {
         let url = format!("{API_BASE}/suggest/{}", encode_path_segment(query));
         let response: SuggestResponse = self
@@ -68,9 +66,7 @@ impl LyricsClient {
         Ok(body.lyrics)
     }
 
-    /// Looks up lyrics for free text. `Ok(None)` means nothing was found —
-    /// a normal outcome, distinct from `Err`, which means the API itself
-    /// failed (network, timeout, unexpected response shape).
+    /// `Ok(None)` means nothing found (normal); `Err` means the API call itself failed.
     pub async fn get_lyrics(
         &self,
         query: &str,

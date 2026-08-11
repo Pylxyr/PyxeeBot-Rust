@@ -84,9 +84,7 @@ pub fn now_playing_buttons(snapshot: &PlayerSnapshot) -> Vec<CreateActionRow> {
     ])]
 }
 
-/// Builds the message text for one page of search results. Position
-/// numbers are absolute across pages (matching `!why <n>`); `query` is
-/// only present on first render, not on page-navigation clicks.
+/// Position numbers are absolute across pages (matches `!why <n>`); `query` shows on page 1 only.
 pub fn search_results_content(
     query: Option<&str>,
     results: &[(Track, ScoreBreakdown)],
@@ -124,9 +122,7 @@ pub fn search_page_count(total: usize) -> usize {
     total.div_ceil(SEARCH_PAGE_SIZE).clamp(1, SEARCH_MAX_PAGES)
 }
 
-/// Discord caps select-menu option labels at 25 characters — well short of
-/// most track titles, so this truncates rather than letting the option get
-/// rejected outright.
+/// Discord caps select-menu labels at 25 chars — truncate rather than have the option rejected.
 fn truncate_label(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_owned();
@@ -136,9 +132,7 @@ fn truncate_label(s: &str, max_chars: usize) -> String {
     t
 }
 
-/// Builds the select menu (current page's results only, values are absolute
-/// indices into the full result set) plus page-jump buttons when there's
-/// more than one page.
+/// Current page's results as select options (absolute indices), plus page-jump buttons if needed.
 pub fn search_select_menu(
     results: &[(Track, ScoreBreakdown)],
     page: usize,
@@ -178,8 +172,7 @@ pub fn search_select_menu(
     vec![select_row, CreateActionRow::Buttons(buttons)]
 }
 
-/// Builds the response that updates the interacted-with message in place —
-/// the standard "acknowledge + edit" pattern for component interactions.
+/// The standard "acknowledge + edit" response for a component interaction.
 pub fn update_response(
     content: impl Into<String>,
     components: Vec<CreateActionRow>,
@@ -191,9 +184,7 @@ pub fn update_response(
     )
 }
 
-/// Same as `update_response`, but for the embed-based Now Playing message.
-/// Clears any leftover plain-text content explicitly, since messages
-/// created before this embed existed still have it set.
+/// Same as `update_response`, but for Now Playing — also clears legacy plain-text content.
 pub fn update_response_embed(
     embed: CreateEmbed,
     components: Vec<CreateActionRow>,

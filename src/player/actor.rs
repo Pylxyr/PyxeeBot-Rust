@@ -25,8 +25,7 @@ use super::snapshot::PlayerSnapshot;
 pub struct PlayOutcome {
     pub position: usize,
     pub now_playing: bool,
-    /// True if nothing could actually be played — the whole queue (including
-    /// what was just added) was tried and every candidate failed to resolve.
+    /// True if the whole queue (including what was just added) failed to resolve.
     pub failed: bool,
 }
 
@@ -79,21 +78,15 @@ pub enum PlayerCommand {
         to: usize,
         reply: oneshot::Sender<bool>,
     },
-    /// Reconnects to a channel without touching queue/playback state. Used
-    /// when stay_connected is on and the bot was force-kicked.
+    /// Reconnects without touching queue/playback state — used after a force-kick with stay_connected on.
     Rejoin {
         channel_id: ChannelId,
     },
-    /// Voice state moved to a new channel without disconnecting (e.g. a
-    /// mod dragged us) — songbird already followed it, this just syncs.
+    /// Moved channels without disconnecting (e.g. dragged) — songbird already followed, this just syncs.
     SyncChannel(ChannelId),
-    /// Fired when a track ends normally, carrying its generation number.
-    /// If that no longer matches `current_generation`, it was already
-    /// superseded (e.g. a manual skip) — the signal is stale and ignored.
+    /// Normal track end; ignored if the generation no longer matches (already superseded, e.g. a skip).
     TrackEnded(u64),
-    /// Same generation check as TrackEnded, but for a playback failure
-    /// (e.g. a corrupt stream) after play_track returned Ok. Exists so the
-    /// failure is logged distinctly and not requeued for loop mode.
+    /// Same generation check as TrackEnded, but for a playback failure — logged distinctly, not requeued.
     TrackErrored(u64),
     ScheduleEmptyDisconnect,
     CancelEmptyDisconnect,
@@ -104,6 +97,8 @@ pub enum PlayerCommand {
         generation: u64,
         result: Result<crate::extraction::ResolvedInfo>,
     },
+    /// Background autoplay search result; `None` means nothing playable turned up.
+    AutoplayReady(Option<Track>),
 }
 
 struct TrackEndNotifier {
@@ -149,17 +144,12 @@ pub struct PlayerActor {
     paused_total: std::time::Duration,
     last_snapshot_hash: Option<u64>,
     retried_current_track: bool,
-    /// Generation `handle_track_finished` last processed — dedups
-    /// songbird's paired Error+End fire without relying on current_handle
-    /// (Skip clears that itself, before TrackEnded arrives).
+    /// Dedups songbird's paired Error+End fire, since Skip clears current_handle before TrackEnded arrives.
     last_finished_generation: Option<u64>,
-    /// Reply channel for a `!play` into an empty queue, waiting on the
-    /// track's background resolve. See handle_play/resolve_pending_play.
+    /// Reply for a `!play` into an empty queue, waiting on the background resolve (see handle_play).
     pending_play_reply: Option<(oneshot::Sender<Result<PlayOutcome>>, usize)>,
     prefetch_task: Option<AbortHandle>,
-    /// 0-200, applied to every TrackHandle as it's created (songbird's
-    /// volume lives on the track, not the driver, so it has to be
-    /// reapplied on every track start, not set once).
+    /// 0-200 — songbird's volume lives on the track, so it's reapplied on every track start, not set once.
     volume: u8,
 }
 
@@ -322,8 +312,7 @@ impl PlayerActor {
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
                 } else if self.state.current.is_some() {
-                    // Still resolving, no songbird handle exists yet — so
-                    // invalidate it and advance ourselves.
+                    // Still resolving, no songbird handle yet — invalidate and advance ourselves.
                     self.current_generation += 1;
                     self.discard_current_and_advance();
                 }
@@ -425,15 +414,12 @@ impl PlayerActor {
             PlayerCommand::Previous { reply } => {
                 let ok = self.state.play_previous();
                 if ok {
-                    self.cancel_idle_timer();
                     if let Some(handle) = self.current_handle.take() {
                         let _ = handle.stop();
                     }
-                    if let Some(track) = self.state.current.clone() {
-                        if let Err(e) = self.play_track(track).await {
-                            tracing::warn!(guild_id = %self.guild_id, error = %e, "failed to play previous track");
-                        }
-                    }
+                    // Background resolve, like every other path — avoids blocking this guild's loop.
+                    self.retried_current_track = false;
+                    self.spawn_resolve_for_current();
                 }
                 let _ = reply.send(ok);
             }
@@ -516,8 +502,7 @@ impl PlayerActor {
             }
             PlayerCommand::EmptyTimeout => {
                 self.empty_timer = None;
-                // The exact regression fix from the Python bug hunt: honour
-                // stay_connected before disconnecting on an empty channel.
+                // Regression fix: honour stay_connected before disconnecting on an empty channel.
                 if self.state.should_disconnect_when_empty() {
                     self.resolve_pending_play(false, false);
                     if let Some(handle) = self.current_handle.take() {
@@ -539,6 +524,9 @@ impl PlayerActor {
             }
             PlayerCommand::ResolveDone { generation, result } => {
                 self.handle_resolve_done(generation, result).await;
+            }
+            PlayerCommand::AutoplayReady(track) => {
+                self.handle_autoplay_ready(track);
             }
         }
     }
@@ -615,8 +603,7 @@ impl PlayerActor {
         tracing::info!(guild_id = %self.guild_id, "handle_play: done");
     }
 
-    /// Connects (or reconnects, if switching channels) if needed. A no-op
-    /// if already connected to the requested channel.
+    /// Connects or switches channels as needed; a no-op if already there.
     async fn ensure_connected(&mut self, channel_id: ChannelId) -> Result<()> {
         if self.call.is_some() && self.channel_id == Some(channel_id) {
             return Ok(());
@@ -631,8 +618,7 @@ impl PlayerActor {
         Ok(())
     }
 
-    /// Answers a `!play` that's waiting on the first track's background
-    /// resolve, if one is pending. No-op otherwise.
+    /// Answers a `!play` waiting on the first track's background resolve, if one is pending.
     fn resolve_pending_play(&mut self, now_playing: bool, failed: bool) {
         if let Some((reply, position)) = self.pending_play_reply.take() {
             let _ = reply.send(Ok(PlayOutcome {
@@ -643,9 +629,7 @@ impl PlayerActor {
         }
     }
 
-    /// Shared by TrackEnded and TrackErrored; an errored track isn't
-    /// requeued for loop mode. `last_finished_generation` dedups songbird's
-    /// paired Error+End fire (current_handle is already cleared by Skip).
+    /// Shared by TrackEnded/TrackErrored; an errored track isn't requeued for loop mode.
     async fn handle_track_finished(&mut self, generation: u64, errored: bool) {
         if generation != self.current_generation
             || self.last_finished_generation == Some(generation)
@@ -667,12 +651,10 @@ impl PlayerActor {
             }
             self.advance_and_resolve_next();
         }
-        self.maybe_autoplay(finished).await;
+        self.maybe_autoplay(finished);
     }
 
-    /// A track's resolve or playback failed. Retries once with a fresh
-    /// (cache-bypassing) resolve; on a second failure, drops it without
-    /// requeuing and moves on.
+    /// Retries once with a cache-bypassing resolve; on a second failure, drops it and moves on.
     async fn handle_resolve_failure(&mut self) {
         if !self.retried_current_track {
             self.retried_current_track = true;
@@ -687,28 +669,50 @@ impl PlayerActor {
         }
     }
 
-    /// Autoplay only makes sense once the queue is genuinely empty — if
-    /// advancing (or a retry) already landed on something, there's nothing
-    /// to do here.
-    async fn maybe_autoplay(&mut self, seed: Option<Track>) {
+    /// Nothing to do if something already landed in `current`; the search runs in the background.
+    fn maybe_autoplay(&mut self, seed: Option<Track>) {
         if self.state.current.is_some() {
             return;
         }
-        if self.state.autoplay {
-            if let Some(seed) = &seed {
-                if let Err(e) = self.try_autoplay(seed).await {
-                    tracing::warn!(guild_id = %self.guild_id, error = %e, "autoplay failed");
-                }
+        if self.state.autoplay && self.lastfm.is_some() {
+            if let Some(seed) = seed {
+                self.spawn_autoplay_search(seed);
+                return;
             }
+        }
+        if self.state.should_disconnect_when_idle() {
+            self.arm_idle_timer();
+        }
+    }
+
+    /// Runs the Last.fm + yt-dlp search off the actor task; reports back via `AutoplayReady`.
+    fn spawn_autoplay_search(&mut self, seed: Track) {
+        let Some(lastfm) = self.lastfm.clone() else { return };
+        let extractor = self.extractor.clone();
+        let self_tx = self.self_tx.clone();
+        let guild_id = self.guild_id;
+        tokio::spawn(async move {
+            let track = find_autoplay_track(&lastfm, &extractor, &seed, guild_id).await;
+            let _ = self_tx.send(PlayerCommand::AutoplayReady(track));
+        });
+    }
+
+    /// Queues the found track, unless autoplay/the call ended while the search ran.
+    fn handle_autoplay_ready(&mut self, track: Option<Track>) {
+        if let Some(track) = track.filter(|_| self.state.autoplay && self.call.is_some()) {
+            let was_idle = self.state.current.is_none();
+            self.state.push_back(track);
+            if was_idle {
+                self.advance_and_resolve_next();
+            }
+            return;
         }
         if self.state.current.is_none() && self.state.should_disconnect_when_idle() {
             self.arm_idle_timer();
         }
     }
 
-    /// Pops the next track from the queue (the just-finished one already
-    /// went to history/requeue before this is called) and starts resolving
-    /// it in the background. Non-blocking — does not wait for the resolve.
+    /// Pops the next queued track and starts resolving it in the background, without waiting.
     fn advance_and_resolve_next(&mut self) {
         self.retried_current_track = false;
         if self.state.advance().is_some() {
@@ -718,9 +722,7 @@ impl PlayerActor {
         }
     }
 
-    /// Like `advance_and_resolve_next`, but for a track abandoned before it
-    /// ever played (failed twice, or skipped mid-resolve) — discarded
-    /// outright, not sent to history or requeued.
+    /// Like `advance_and_resolve_next`, but for a track abandoned before it ever played.
     fn discard_current_and_advance(&mut self) {
         self.state.current = self.state.pop_front();
         self.retried_current_track = false;
@@ -732,9 +734,7 @@ impl PlayerActor {
         }
     }
 
-    /// Resolves `self.state.current` in the background, reporting back via
-    /// `ResolveDone` instead of blocking the command loop — a resolve can
-    /// take tens of seconds, and awaiting it inline would freeze !skip/!stop.
+    /// Backgrounds the resolve and reports via `ResolveDone` — inline would freeze !skip/!stop.
     fn spawn_resolve_for_current(&mut self) {
         let Some(track) = self.state.current.clone() else {
             return;
@@ -759,9 +759,7 @@ impl PlayerActor {
         });
     }
 
-    /// Handles a background resolve finishing — starts playback on success,
-    /// otherwise routes into the same retry/give-up path as a post-playback
-    /// songbird error.
+    /// Starts playback on a successful resolve, else routes into the same retry/give-up path.
     async fn handle_resolve_done(
         &mut self,
         generation: u64,
@@ -791,104 +789,10 @@ impl PlayerActor {
                 self.handle_resolve_failure().await;
             }
         }
-        self.maybe_autoplay(seed).await;
+        self.maybe_autoplay(seed);
     }
 
-    async fn play_track(&mut self, track: Track) -> Result<()> {
-        tracing::info!(guild_id = %self.guild_id, title = %track.title, url = %track.webpage_url, "play_track: resolving stream");
-        let resolve_start = std::time::Instant::now();
-        let resolved = self.extractor.resolve_stream(&track, None).await?;
-        tracing::info!(
-            guild_id = %self.guild_id,
-            title = %track.title,
-            elapsed = ?resolve_start.elapsed(),
-            stream_url_len = resolved.stream_url.len(),
-            acodec = %resolved.acodec,
-            "play_track: stream resolved",
-        );
-
-        let Some(call) = self.call.clone() else {
-            tracing::warn!(guild_id = %self.guild_id, "play_track: no active voice call");
-            return Err(BotError::NotInVoiceChannel);
-        };
-
-        self.cancel_idle_timer();
-        self.current_generation += 1;
-        let generation = self.current_generation;
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        for (name, value) in &resolved.headers {
-            let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {
-                tracing::warn!(guild_id = %self.guild_id, header = %name, "play_track: skipping header with invalid name from yt-dlp");
-                continue;
-            };
-            let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) else {
-                tracing::warn!(guild_id = %self.guild_id, header = %name, "play_track: skipping header with invalid value from yt-dlp");
-                continue;
-            };
-            headers.insert(header_name, header_value);
-        }
-        tracing::info!(
-            guild_id = %self.guild_id,
-            header_count = headers.len(),
-            content_length = ?resolved.content_length,
-            "play_track: built HttpRequest with headers/content_length from yt-dlp",
-        );
-
-        let input: Input = HttpRequest {
-            client: self.http_client.clone(),
-            request: resolved.stream_url,
-            headers,
-            content_length: resolved.content_length,
-        }
-        .into();
-        tracing::info!(guild_id = %self.guild_id, generation, "play_track: handing input to songbird");
-        let handle = {
-            let mut call_guard = call.lock().await;
-            call_guard.play_only_input(input)
-        };
-        let end_notifier = TrackEndNotifier {
-            tx: self.self_tx.clone(),
-            generation,
-            errored: false,
-        };
-        let _ = handle.add_event(Event::Track(TrackEvent::End), end_notifier);
-        let error_notifier = TrackEndNotifier {
-            tx: self.self_tx.clone(),
-            generation,
-            errored: true,
-        };
-        let _ = handle.add_event(Event::Track(TrackEvent::Error), error_notifier);
-        let _ = handle.set_volume(f32::from(self.volume) / 100.0);
-
-        self.current_handle = Some(handle);
-        self.is_paused = false;
-        self.track_started_at = Some(std::time::Instant::now());
-        self.paused_since = None;
-        self.paused_total = std::time::Duration::ZERO;
-        tracing::info!(guild_id = %self.guild_id, title = %track.title, "play_track: playback started");
-
-        let db = self.db.clone();
-        let guild_id = self.guild_id.get();
-        let title = track.title.clone();
-        let webpage_url = track.webpage_url.clone();
-        let requester_id = track.requester_id;
-        let duration = track.duration;
-        tokio::spawn(async move {
-            if let Err(e) = db
-                .add_play_history(guild_id, &title, &webpage_url, requester_id, duration)
-                .await
-            {
-                tracing::warn!(guild_id = guild_id, error = %e, "play_track: failed to record play history");
-            }
-        });
-
-        Ok(())
-    }
-
-    /// The songbird hand-off half of playing a track, given an
-    /// already-resolved `ResolvedInfo`. Mirrors `play_track`'s second half
-    /// rather than sharing code, to avoid touching its inline blocking path.
+    /// Hands a resolved stream to songbird — shared by every playback-start path now.
     async fn finish_starting_track(
         &mut self,
         track: Track,
@@ -970,47 +874,7 @@ impl PlayerActor {
         Ok(())
     }
 
-    /// Autoplay: finds a similar artist via Last.fm and plays a track by
-    /// them. A no-op if Last.fm isn't configured or nothing turns up — the
-    /// caller falls back to the idle timer in that case.
-    async fn try_autoplay(&mut self, seed: &Track) -> Result<()> {
-        let Some(lastfm) = self.lastfm.clone() else {
-            return Ok(());
-        };
-        let seed_artist = clean_artist_name(&seed.uploader);
-        if seed_artist.is_empty() {
-            return Ok(());
-        }
-        tracing::info!(guild_id = %self.guild_id, seed_artist = %seed_artist, "try_autoplay: querying Last.fm");
-
-        let similar = lastfm
-            .similar_artists(&seed_artist, 5)
-            .await
-            .map_err(|e| BotError::Voice(e.to_string()))?;
-        tracing::info!(guild_id = %self.guild_id, count = similar.len(), "try_autoplay: got similar artists");
-
-        for artist in similar {
-            if let Ok(tracks) = self
-                .extractor
-                .search(&artist, seed.requester_id, true)
-                .await
-            {
-                if let Some(track) = tracks.into_iter().next() {
-                    tracing::info!(guild_id = %self.guild_id, artist = %artist, title = %track.title, "try_autoplay: queuing");
-                    self.state.push_back(track);
-                    self.advance_and_resolve_next();
-                    return Ok(());
-                }
-            }
-        }
-        tracing::info!(guild_id = %self.guild_id, "try_autoplay: nothing playable found");
-        Ok(())
-    }
-
-    /// Resolves the next `ytdlp_prefetch_count` tracks in the background,
-    /// sequentially — parallel extraction competes with live Opus encoding
-    /// for the same core and is slower overall. A fresh call cancels any
-    /// prefetch still in flight, so reordering re-prioritizes immediately.
+    /// Sequential, not parallel — parallel extraction competes with live Opus encoding for the same core.
     fn spawn_prefetch(&mut self) {
         if let Some(handle) = self.prefetch_task.take() {
             handle.abort();
@@ -1065,9 +929,38 @@ impl PlayerActor {
     }
 }
 
-/// Strips common YouTube auto-generated channel suffixes (e.g. the
-/// "Artist - Topic" pattern from YouTube Music) so the name reads as a
-/// plain artist for Last.fm's lookup.
+/// Strips YouTube's auto-generated "Artist - Topic" channel suffix for Last.fm's lookup.
 fn clean_artist_name(uploader: &str) -> String {
     uploader.trim_end_matches(" - Topic").trim().to_owned()
+}
+
+/// Free function, not a method — lets the search run entirely off the actor task.
+async fn find_autoplay_track(
+    lastfm: &LastFmClient,
+    extractor: &Extractor,
+    seed: &Track,
+    guild_id: GuildId,
+) -> Option<Track> {
+    let seed_artist = clean_artist_name(&seed.uploader);
+    if seed_artist.is_empty() {
+        return None;
+    }
+    tracing::info!(%guild_id, seed_artist = %seed_artist, "autoplay: querying Last.fm");
+    let similar = match lastfm.similar_artists(&seed_artist, 5).await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(%guild_id, error = %e, "autoplay: Last.fm lookup failed");
+            return None;
+        }
+    };
+    for artist in similar {
+        if let Ok(tracks) = extractor.search(&artist, seed.requester_id, true).await {
+            if let Some(track) = tracks.into_iter().next() {
+                tracing::info!(%guild_id, %artist, title = %track.title, "autoplay: found a candidate");
+                return Some(track);
+            }
+        }
+    }
+    tracing::info!(%guild_id, "autoplay: nothing playable found");
+    None
 }

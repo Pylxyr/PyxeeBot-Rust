@@ -10,9 +10,7 @@ use crate::config::Config;
 use crate::constants::{YTDLP_FORMAT, YTDLP_RETRY_FORMAT};
 use crate::errors::{BotError, Result};
 
-/// Builds the yt-dlp metadata-extraction args — a pure function so it's
-/// testable without spawning a process. `client_override` retries with a
-/// different YouTube player client when bot-detection blocks the default.
+/// Pure function (testable without spawning); `client_override` retries with a different player client.
 pub fn extract_args(
     config: &Config,
     query_or_url: &str,
@@ -63,22 +61,20 @@ pub fn extract_args(
     args
 }
 
-/// Builds args for a `ytsearchN:` text search. Uses `--flat-playlist` since
-/// ranking only needs the metadata search results carry inline — full
-/// per-video extraction only happens for whichever track actually plays.
+/// `--flat-playlist`: ranking only needs the inline metadata, not full per-video extraction.
 pub fn search_args(config: &Config, query: &str, count: usize) -> Vec<String> {
     let search_target = format!("ytsearch{count}:{query}");
     extract_args(config, &search_target, true, None)
 }
 
-/// Lists every entry of an actual playlist URL. Not built on `extract_args`,
-/// since that always passes `--no-playlist` (needed there so a video with
-/// an incidental `list=` param still plays as one video, not a playlist).
-pub fn extract_playlist_args(config: &Config, playlist_url: &str) -> Vec<String> {
+/// Lists up to `limit` entries of a playlist URL; `--playlist-end` caps yt-dlp's own work.
+pub fn extract_playlist_args(config: &Config, playlist_url: &str, limit: usize) -> Vec<String> {
     let mut args = vec![
         "--dump-json".to_owned(),
         "--no-warnings".to_owned(),
         "--flat-playlist".to_owned(),
+        "--playlist-end".to_owned(),
+        limit.max(1).to_string(),
         "--socket-timeout".to_owned(),
         config.ytdlp_socket_timeout.to_string(),
     ];
@@ -100,9 +96,7 @@ pub fn extract_playlist_args(config: &Config, playlist_url: &str) -> Vec<String>
     args
 }
 
-/// Runs yt-dlp with the given arguments and parses each stdout line as a JSON
-/// object (yt-dlp emits one JSON object per line for `ytsearchN:` and
-/// playlist-style targets, or a single line for a direct URL/query).
+/// Parses each stdout line as JSON — yt-dlp emits one line per result for search/playlist targets.
 pub async fn run_ytdlp(config: &Config, args: &[String]) -> Result<Vec<Value>> {
     tracing::info!(cmd = %format!("yt-dlp {}", args.join(" ")), "run_ytdlp: spawning");
     let start = std::time::Instant::now();

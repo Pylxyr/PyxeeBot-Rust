@@ -6,8 +6,7 @@ use tokio::sync::Mutex;
 
 use crate::errors::{BotError, Result};
 
-/// Joins (or switches to) the given voice channel. Songbird's manager
-/// reuses or creates the `Call` as needed — no separate cleanup required.
+/// Joins/switches channels — songbird's manager reuses or creates the `Call` as needed.
 pub async fn connect(
     songbird: &Songbird,
     guild_id: GuildId,
@@ -30,9 +29,7 @@ pub async fn connect(
     result
 }
 
-/// Returns `Ok(true)` if a call was actually left, `Ok(false)` if there was
-/// nothing to leave — treated as success, not an error, since "not
-/// connected" already satisfies the caller's goal.
+/// `Ok(false)` means nothing was connected — that already satisfies the caller's goal, not an error.
 pub async fn disconnect(songbird: &Songbird, guild_id: GuildId) -> Result<bool> {
     if songbird.get(guild_id).is_none() {
         tracing::info!(guild_id = %guild_id, "lifecycle::disconnect: nothing to leave");

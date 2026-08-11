@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Manual fallback for release.yml. Keep the service/path in sync with it.
+# Fresh server: run deploy/setup-swap.sh once first (e2.micro has no swap by default).
 
 : "${SERVER_HOST:?Set SERVER_HOST to the Oracle instance address}"
 : "${SERVER_USER:?Set SERVER_USER (e.g. ubuntu)}"
@@ -9,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "Building release binary..."
-cargo build --release
+cargo build --release --locked
 
 echo "Uploading binary..."
 scp target/release/pyxeebot "${SERVER_USER}@${SERVER_HOST}:~/pyxeebotr/pyxeebot.new"

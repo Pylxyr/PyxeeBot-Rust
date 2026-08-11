@@ -102,8 +102,7 @@ async fn handle_component_interaction(
     }
 }
 
-/// Same check `require_same_voice_channel` uses for text commands — the
-/// buttons need it too or they bypass it entirely.
+/// Same check `require_same_voice_channel` uses for text commands — buttons need it too.
 async fn has_np_button_permission(
     ctx: &serenity::Context,
     data: &Arc<BotData>,
@@ -170,8 +169,7 @@ async fn handle_search_pick(
     track.requester_id = user_id.get();
     let title = track.escaped_title();
 
-    // Interactions must be acked within 3s, but play() (search + voice
-    // connect) routinely takes longer — ack first, edit once it's done.
+    // Must ack within 3s, but play() (search + voice connect) routinely takes longer.
     let _ = interaction
         .create_response(ctx, CreateInteractionResponse::Acknowledge)
         .await;
@@ -236,8 +234,7 @@ async fn handle_voice_state_update(
 
     if new.user_id == bot_id {
         let Some(new_channel) = new.channel_id else {
-            // Only rejoin if stay_connected is on — otherwise this fires
-            // harmlessly after a clean !leave too.
+            // Only rejoin if stay_connected is on — a clean !leave fires this too.
             let Some(old_channel) = old.and_then(|o| o.channel_id) else {
                 return;
             };
@@ -259,8 +256,7 @@ async fn handle_voice_state_update(
             return;
         };
 
-        // Channel changed without disconnecting (e.g. dragged by a mod) —
-        // sync our state; songbird already followed the move.
+        // Channel changed without disconnecting (e.g. dragged) — songbird already followed.
         if old.and_then(|o| o.channel_id) != Some(new_channel) {
             if let Some(player) = data.players.get(&guild_id).map(|p| p.clone()) {
                 player.sync_channel(new_channel);
@@ -269,8 +265,7 @@ async fn handle_voice_state_update(
         return;
     }
 
-    // A different member's voice state changed. Only relevant if it affects
-    // the channel our bot is currently sitting in.
+    // Someone else's voice state changed — only relevant if it affects our channel.
     let Some(player) = data.players.get(&guild_id).map(|p| p.clone()) else {
         return;
     };
@@ -288,8 +283,7 @@ async fn handle_voice_state_update(
         return;
     }
 
-    // Simplification: this excludes only our own bot from the human count,
-    // not other bot accounts that might be sitting in the same channel.
+    // Excludes only our own bot from the human count, not other bots in the channel.
     let has_humans = ctx.cache.guild(guild_id).is_some_and(|g| {
         g.voice_states
             .values()

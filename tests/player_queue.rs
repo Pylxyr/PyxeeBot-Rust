@@ -45,9 +45,7 @@ fn push_back_evicts_front_at_capacity_and_fixes_total_duration() {
 
 #[test]
 fn push_front_evicts_back_at_capacity_and_fixes_total_duration() {
-    // This is the exact bug class fixed in the Python version: appendleft
-    // on a full deque silently evicts the back, and total_duration must
-    // account for that evicted track, not just add the new one.
+    // Python bug class: appendleft on a full deque evicted the back without fixing total_duration.
     let mut state = PlayerState::new(2, false, false);
     state.push_back(track("a", 10));
     state.push_back(track("b", 20));
@@ -94,9 +92,7 @@ fn play_previous_moves_history_to_current_and_current_back_to_queue() {
 
 #[test]
 fn play_previous_respects_capacity_eviction() {
-    // Full queue: pushing the old "current" back onto the front must evict
-    // the back and adjust total_duration accordingly, exactly like any
-    // other push_front call.
+    // Full queue: requeuing the old "current" must evict the back like any other push_front.
     let mut state = PlayerState::new(2, false, false);
     state.history.push(track("prev", 50));
     state.current = Some(track("current", 30));

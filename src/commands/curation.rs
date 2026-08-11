@@ -1,14 +1,11 @@
 use crate::bot::Context;
 
-/// Sliding window size for per-guild !vibe song history — see vibe_history
-/// on BotData.
+/// Sliding window size for per-guild !vibe song history — see vibe_history on BotData.
 const VIBE_HISTORY_CAP: usize = 50;
-/// How many similar tracks/artists to ask Last.fm for. Kept modest since
-/// each candidate costs one sequential yt-dlp search (~5-15s on this box).
+/// How many similar tracks/artists to try; actual concurrency is capped by YTDLP_CURATION_CONCURRENCY.
 const VIBE_CANDIDATE_COUNT: usize = 4;
 
-/// Normalizes a query string into a dedup key so "Zutomayo Saturn" and
-/// "zutomayo  saturn" count as the same song.
+/// Normalizes a query into a dedup key, so casing/spacing variants count as the same song.
 fn vibe_history_key(query: &str) -> String {
     query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
@@ -41,8 +38,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         .say(format!("Building a vibe around `{artist}`..."))
         .await?;
 
-    // Try "artist + song" first (typed the same way as !play), falling
-    // back to artist-level similarity if nothing matches.
+    // "Artist + song" first (typed like !play), falling back to artist-level similarity.
     let mut queries: Vec<String> = Vec::new();
     if let Ok(Some((resolved_artist, resolved_track))) = lastfm.resolve_track(&artist).await {
         if let Ok(similar) = lastfm
@@ -83,8 +79,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         };
     }
 
-    // Prefer songs outside this guild's recent !vibe history; only reuse
-    // one if every candidate this round is a repeat.
+    // Prefer songs outside recent !vibe history; reuse one only if every candidate repeats.
     {
         let seen = data.vibe_history.get(&guild_id);
         let fresh: Vec<String> = queries
@@ -103,8 +98,17 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     let player = data.player_for(guild_id).await;
 
     let mut queued = Vec::new();
+    // Searches run concurrently; Extractor's own search_semaphore still caps actual yt-dlp processes.
+    let mut search_tasks = Vec::with_capacity(queries.len());
     for query in &queries {
-        let Ok(tracks) = data.extractor.search(query, author_id, true).await else {
+        let extractor = data.extractor.clone();
+        let query = query.clone();
+        search_tasks.push(tokio::spawn(async move {
+            extractor.search(&query, author_id, true).await.ok()
+        }));
+    }
+    for (query, task) in queries.iter().zip(search_tasks) {
+        let Ok(Some(tracks)) = task.await else {
             continue;
         };
         let Some(track) = tracks.into_iter().next() else {

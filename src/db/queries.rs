@@ -48,9 +48,7 @@ pub struct UserStats {
     pub total_seconds: i64,
 }
 
-/// Minimal fields a caller needs to persist a queue entry (playlist item or
-/// snapshot row) — deliberately not the full `Track`, since only these four
-/// fields round-trip through storage.
+/// Deliberately not the full `Track` — only these four fields round-trip through storage.
 #[derive(Debug, Clone)]
 pub struct QueueEntryRef<'a> {
     pub query: &'a str,

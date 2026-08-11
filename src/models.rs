@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// A queued track. Immutable — the player never mutates a `Track` in place.
-/// Resolution state (stream URL, resolved-at timestamp) lives separately on
-/// `ResolvedTrack` (added in Phase 2), not on the queue entry itself.
+/// A queued track, immutable — resolved-stream state lives separately in `extraction::ResolvedInfo`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Track {
     pub title: String,
@@ -47,8 +45,7 @@ impl Track {
     }
 }
 
-/// Mirrors discord.utils.escape_markdown for the characters the bot's own
-/// title/uploader strings can contain.
+/// Mirrors discord.utils.escape_markdown for characters bot-owned strings can contain.
 pub fn escape_markdown(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {

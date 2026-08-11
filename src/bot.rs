@@ -30,18 +30,16 @@ pub struct BotData {
     pub players: DashMap<serenity::GuildId, Arc<GuildPlayer>>,
     /// Last search's ranked results + score breakdowns per guild, for `!why`.
     pub search_debug: Cache<serenity::GuildId, Arc<Vec<(Track, ScoreBreakdown)>>>,
-    /// Recently `!vibe`-queued song keys per guild, oldest-first, capped at
-    /// VIBE_HISTORY_CAP — lets vibe favour songs it hasn't just played.
+    /// Recently `!vibe`-queued song keys per guild — lets vibe favour songs it hasn't just played.
     pub vibe_history: DashMap<serenity::GuildId, std::collections::VecDeque<String>>,
-    /// Vote-skip tallies per guild: the track URL votes are for (so a track
-    /// change resets them) plus who's voted. Command-layer only — the actor
-    /// has no Discord cache access to count listeners itself.
+    /// Vote-skip tallies per guild — lives here since the actor has no Discord cache access to count listeners.
     pub skip_votes: DashMap<serenity::GuildId, (String, HashSet<u64>)>,
+    /// One live `!nowplaying` auto-refresher per guild — a new one aborts whatever was running.
+    pub np_refreshers: DashMap<serenity::GuildId, tokio::task::AbortHandle>,
 }
 
 impl BotData {
-    /// Returns the guild's player, spawning one (with persisted
-    /// stay_connected/autoplay settings) if it doesn't exist yet.
+    /// Returns the guild's player, spawning one (with persisted settings) if it doesn't exist yet.
     pub async fn player_for(&self, guild_id: serenity::GuildId) -> Arc<GuildPlayer> {
         if let Some(existing) = self.players.get(&guild_id) {
             return existing.clone();
@@ -74,9 +72,7 @@ pub type Context<'a> = poise::Context<'a, Arc<BotData>, anyhow::Error>;
 pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
     use tracing_subscriber::prelude::*;
 
-    // LOG_LEVEL sets the baseline (keeps noisy deps like h2/rustls quiet),
-    // but pyxeebot/songbird/symphonia are always at least "debug" since
-    // those are what matters when chasing a playback bug.
+    // LOG_LEVEL sets the baseline; pyxeebot/songbird/symphonia stay at least "debug" regardless.
     let base = if config.log_level.trim().is_empty() {
         "info"
     } else {
@@ -87,9 +83,7 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
     let fallback = "info,pyxeebot=debug,songbird=debug,symphonia_core=debug,symphonia=debug";
     let filter = EnvFilter::try_new(&directive_str).or_else(|_| EnvFilter::try_new(fallback))?;
 
-    // Always emit to stdout too (captured by journalctl under systemd), so
-    // logs aren't gated behind remembering to tail a file. LOG_TO_FILE adds
-    // a second destination rather than replacing this one.
+    // Always emit to stdout too (journalctl-visible under systemd); LOG_TO_FILE just adds a second sink.
     let stdout_layer = fmt::layer().with_ansi(false);
     let registry = tracing_subscriber::registry()
         .with(filter)
@@ -98,8 +92,7 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
     if config.log_to_file {
         let appender = tracing_appender::rolling::never(&config.log_dir, "musicbot.log");
         let (writer, guard) = tracing_appender::non_blocking(appender);
-        // The guard must outlive the program to keep flushing to disk; there is
-        // no natural owner for it, so it is intentionally leaked once at startup.
+        // No natural owner for this guard, so it's intentionally leaked once at startup.
         Box::leak(Box::new(guard));
         let file_layer = fmt::layer().with_writer(writer).with_ansi(false);
         registry.with(file_layer).init();
@@ -161,13 +154,9 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     .await
                     .expect("songbird manager not registered");
                 let extractor = Arc::new(Extractor::new(setup_config.clone()));
-                // Deliberately timeout-free: this client is handed to songbird
-                // for the actual audio stream download, which is a long-lived
-                // request that must not be cut off partway through.
+                // Deliberately timeout-free: songbird uses this for the long-lived audio download.
                 let http_client = reqwest::Client::new();
-                // Timeout-bounded client for Last.fm/lyrics — these are awaited
-                // inline in the actor's serial command loop, so an untimed
-                // request could hang a whole guild's player.
+                // Timeout-bounded client for Last.fm/lyrics calls, so a slow response can't hang indefinitely.
                 let api_http_client = reqwest::Client::builder()
                     .timeout(Duration::from_secs(10))
                     .build()?;
@@ -192,6 +181,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                         .build(),
                     vibe_history: DashMap::new(),
                     skip_votes: DashMap::new(),
+                    np_refreshers: DashMap::new(),
                 });
 
                 if data.config.restore_queue_on_restart {
@@ -206,6 +196,13 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     let http = ctx.http.clone();
                     tokio::spawn(async move {
                         watch_resolve_failures(data, http).await;
+                    });
+                }
+
+                {
+                    let db = data.db.clone();
+                    tokio::spawn(async move {
+                        checkpoint_wal_periodically(db).await;
                     });
                 }
 
@@ -266,9 +263,7 @@ async fn restore_queues(data: Arc<BotData>) {
     }
 }
 
-/// Polls the extractor's failure streak and DMs bot owners once it crosses
-/// the threshold (likely a broken cookie/PO-token setup, not bad videos).
-/// Alerts once per streak, re-arming after the next successful resolve.
+/// Polls the extractor's failure streak and DMs bot owners once it crosses the threshold.
 async fn watch_resolve_failures(data: Arc<BotData>, http: Arc<serenity::Http>) {
     const CHECK_INTERVAL: Duration = Duration::from_secs(60);
     const FAILURE_THRESHOLD: u32 = 5;
@@ -295,6 +290,17 @@ async fn watch_resolve_failures(data: Arc<BotData>, http: Arc<serenity::Http>) {
             }
         } else if streak == 0 {
             already_alerted = false;
+        }
+    }
+}
+
+/// PASSIVE checkpoint no-ops while a reader is open; this backstops it with a timed TRUNCATE.
+async fn checkpoint_wal_periodically(db: Arc<Database>) {
+    const INTERVAL: Duration = Duration::from_secs(20 * 60);
+    loop {
+        tokio::time::sleep(INTERVAL).await;
+        if let Err(e) = db.checkpoint_truncate().await {
+            tracing::warn!(error = %e, "checkpoint_wal_periodically: checkpoint failed");
         }
     }
 }

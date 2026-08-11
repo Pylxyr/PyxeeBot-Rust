@@ -18,9 +18,7 @@ fn voice_channel_of(
         .and_then(|vs| vs.channel_id)
 }
 
-/// True only for an actual playlist page (`list=` without `v=`) — not a
-/// video URL that incidentally carries `list=`, which YouTube attaches to
-/// almost every autoplay-mix link and should still just play that video.
+/// True only for `list=` without `v=` — not a video URL that incidentally carries `list=`.
 fn is_playlist_url(url: &str) -> bool {
     let lower = url.to_lowercase();
     lower.contains("list=") && !lower.contains("v=")
@@ -69,8 +67,7 @@ async fn play_playlist(
         )
         .await;
 
-    // Reversed for `!playnext`: pushing N tracks to the front one at a time
-    // would otherwise land them in reverse order.
+    // Reversed for !playnext — pushing to the front one at a time would reverse the order.
     let ordered: Vec<_> = if front {
         tracks.into_iter().rev().collect()
     } else {
@@ -475,20 +472,23 @@ pub async fn nowplaying(ctx: Context<'_>) -> anyhow::Result<()> {
             let channel_id = ctx.channel_id();
             let message_id = message.id;
             let interval_secs = u64::from(ctx.data().config.np_auto_refresh_interval);
-            tokio::spawn(refresh_now_playing(
+            let task = tokio::spawn(refresh_now_playing(
                 http,
                 channel_id,
                 message_id,
                 player,
                 interval_secs,
             ));
+            // Replace, don't stack: an earlier refresher for this guild would otherwise leak.
+            if let Some(old) = ctx.data().np_refreshers.insert(guild_id, task.abort_handle()) {
+                old.abort();
+            }
         }
     }
     Ok(())
 }
 
-/// Detached loop for `NP_AUTO_REFRESH`; stops when nothing's playing, the
-/// edit fails, or a max duration is hit.
+/// Detached loop for NP_AUTO_REFRESH — stops when nothing's playing, an edit fails, or the cap hits.
 async fn refresh_now_playing(
     http: Arc<Http>,
     channel_id: ChannelId,

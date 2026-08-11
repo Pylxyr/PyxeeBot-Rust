@@ -109,10 +109,7 @@ pub(super) fn dash_separated_re() -> &'static Regex {
 }
 
 // ── Fuzzy: partial_ratio substitute ──────────────────────────────────────────
-//
-// rapidfuzz-rs 0.5.0 has `ratio` but not Python's `partial_ratio`, so this
-// reproduces it: best alignment of the shorter string against a
-// same-length window of the longer one, built on `ratio`.
+// rapidfuzz-rs 0.5.0 lacks Python's `partial_ratio`; reproduces it via best-window `ratio`.
 pub(super) fn partial_ratio(a: &str, b: &str) -> f64 {
     let (shorter, longer): (Vec<char>, Vec<char>) = {
         let ac: Vec<char> = a.chars().collect();

@@ -22,9 +22,7 @@ use crate::models::{LoopMode, Track};
 
 use actor::{PlayerActor, PlayerCommand};
 
-/// Public handle to a guild's player actor. Cheap to clone (wraps an
-/// unbounded sender and a watch receiver); the actual state lives entirely
-/// inside the spawned actor task.
+/// Cheap-to-clone handle to a guild's player actor; state lives entirely in the spawned task.
 pub struct GuildPlayer {
     tx: tokio::sync::mpsc::UnboundedSender<PlayerCommand>,
     snapshot_rx: watch::Receiver<PlayerSnapshot>,
@@ -110,8 +108,7 @@ impl GuildPlayer {
         let _ = rx.await;
     }
 
-    /// `Ok(true)` if a call was actually left, `Ok(false)` if the bot
-    /// wasn't connected — not an error either way.
+    /// `Ok(true)` if a call was actually left; `Ok(false)` just means it wasn't connected.
     pub async fn leave(&self) -> Result<bool> {
         let (reply, rx) = oneshot::channel();
         self.send(PlayerCommand::Leave { reply });

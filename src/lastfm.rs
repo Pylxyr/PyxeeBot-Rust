@@ -8,9 +8,7 @@ pub struct LastFmClient {
     http_client: reqwest::Client,
 }
 
-// Last.fm signals API-level failures (e.g. "artist not found") with a 200 OK
-// and an error-shaped body, not an HTTP error status — so success/error must
-// be distinguished after fetching, not via error_for_status().
+// Last.fm signals API errors with a 200 OK + error-shaped body, not an HTTP error status.
 #[derive(Debug, Deserialize)]
 struct LastFmErrorResponse {
     message: String,
@@ -84,9 +82,7 @@ impl LastFmClient {
         }
     }
 
-    /// Fetches from the Last.fm API and deserializes into T. Distinguishes
-    /// Last.fm's error-shaped body (see LastFmErrorResponse) from a genuine
-    /// decode failure so the former surfaces Last.fm's own message.
+    /// Distinguishes Last.fm's error-shaped body from a genuine decode failure.
     async fn get<T: serde::de::DeserializeOwned>(
         &self,
         params: &[(&str, &str)],
@@ -131,8 +127,7 @@ impl LastFmClient {
             .collect())
     }
 
-    /// Resolves a free-text query (e.g. "zutomayo saturn") to the best
-    /// matching (artist, track) pair via Last.fm's fuzzy track search.
+    /// Resolves free text (e.g. "zutomayo saturn") to the best-matching (artist, track) pair.
     pub async fn resolve_track(&self, query: &str) -> anyhow::Result<Option<(String, String)>> {
         let response: TrackSearchResponse = self
             .get(&[
@@ -150,8 +145,7 @@ impl LastFmClient {
             .map(|t| (t.artist, t.name)))
     }
 
-    /// Returns similar (artist, track) pairs for a seed track, most similar
-    /// first.
+    /// Similar (artist, track) pairs for a seed track, most similar first.
     pub async fn similar_tracks(
         &self,
         artist: &str,

@@ -52,8 +52,7 @@ impl PlayerState {
             .count()
     }
 
-    /// Appends to the back, evicting the front if already at capacity —
-    /// mirrors Python's `collections.deque(maxlen=N)` semantics for `append`.
+    /// Evicts the front at capacity — mirrors Python's `deque(maxlen=N).append`.
     pub fn push_back(&mut self, track: Track) {
         if self.queue.len() >= self.max_queue_size {
             if let Some(evicted) = self.queue.pop_front() {
@@ -64,9 +63,7 @@ impl PlayerState {
         self.queue.push_back(track);
     }
 
-    /// Prepends to the front, evicting the back if already at capacity —
-    /// mirrors `deque.appendleft`. The Python version missed this eviction
-    /// for `!replay`/loop mode, drifting `total_duration` out of sync.
+    /// Evicts the back at capacity — the Python version skipped this, drifting `total_duration`.
     pub fn push_front(&mut self, track: Track) {
         if self.queue.len() >= self.max_queue_size {
             if let Some(evicted) = self.queue.pop_back() {
@@ -85,8 +82,7 @@ impl PlayerState {
         track
     }
 
-    /// Moves `current` into (bounded) history and pulls the next track off
-    /// the queue as the new `current`.
+    /// Moves `current` into bounded history and pulls the next track off the queue.
     pub fn advance(&mut self) -> Option<Track> {
         if let Some(prev) = self.current.take() {
             self.history.push(prev);
@@ -98,8 +94,7 @@ impl PlayerState {
         self.current.clone()
     }
 
-    /// Requeues a just-finished track per loop mode. Both paths go through
-    /// `push_front`/`push_back`, so eviction accounting is always correct.
+    /// Requeues a just-finished track per loop mode, via push_front/push_back for correct accounting.
     pub fn requeue_finished(&mut self, track: Track) {
         match self.loop_mode {
             LoopMode::One => self.push_front(track),
@@ -108,9 +103,7 @@ impl PlayerState {
         }
     }
 
-    /// Rewinds playback: the last history entry becomes `current`, and the
-    /// previous `current` (if any) goes back on the front of the queue.
-    /// Returns false if there is no history to rewind to.
+    /// Rewinds to the last history entry; returns false if there's no history.
     pub fn play_previous(&mut self) -> bool {
         let Some(previous) = self.history.pop() else {
             return false;
@@ -141,9 +134,7 @@ impl PlayerState {
         track
     }
 
-    /// Removes the track at `position` only if `requester_id` queued it or
-    /// `is_dj` is true. Checks and removes atomically here, so there's no
-    /// window for the queue to change between checking ownership and removing.
+    /// Checks ownership and removes atomically, so nothing can change in between.
     pub fn remove_if_allowed(
         &mut self,
         position: usize,
@@ -174,15 +165,12 @@ impl PlayerState {
         }
     }
 
-    /// Whether an empty-channel disconnect should proceed. The Python
-    /// version was missing this `stay_connected` guard entirely. Relies on
-    /// `events.rs` having already cancelled the timer if someone rejoined.
+    /// The Python version was missing this `stay_connected` guard entirely.
     pub fn should_disconnect_when_empty(&self) -> bool {
         !self.stay_connected
     }
 
-    /// Whether an idle disconnect (nothing playing, nothing queued) should
-    /// proceed.
+    /// Whether an idle disconnect (nothing playing, nothing queued) should proceed.
     pub fn should_disconnect_when_idle(&self) -> bool {
         !self.stay_connected && self.current.is_none() && self.queue.is_empty()
     }
