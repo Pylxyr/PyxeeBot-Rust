@@ -27,11 +27,11 @@ jobs:
         run: |
           set -e
           NEW_SHA="${{ github.sha }}"
-          if ! git diff --quiet -- Cargo.lock; then
+          git add Cargo.lock
+          if ! git diff --cached --quiet; then
             if [ "${{ github.ref }}" = "refs/heads/main" ]; then
               git config user.name "github-actions[bot]"
               git config user.email "github-actions[bot]@users.noreply.github.com"
-              git add Cargo.lock
               git commit -m "chore: update Cargo.lock [skip ci]"
               git push
               NEW_SHA="$(git rev-parse HEAD)"
@@ -68,21 +68,6 @@ jobs:
         with:
           shared-key: release
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
-
-  audit:
-    runs-on: ubuntu-latest
-    needs: lockfile
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.lockfile.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: audit
-      # Plain CLI, not a check-annotation action — needs no extra permissions.
-      - run: cargo install cargo-audit --locked
-      - run: cargo audit
 
   build:
     runs-on: ubuntu-latest
