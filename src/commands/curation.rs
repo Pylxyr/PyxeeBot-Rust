@@ -2,7 +2,7 @@ use crate::bot::Context;
 
 /// Sliding window size for per-guild !vibe song history — see vibe_history on BotData.
 const VIBE_HISTORY_CAP: usize = 50;
-/// How many similar tracks/artists to try; actual concurrency is capped by YTDLP_CURATION_CONCURRENCY.
+/// How many similar tracks/artists to try, searched one at a time.
 const VIBE_CANDIDATE_COUNT: usize = 4;
 
 /// Normalizes a query into a dedup key, so casing/spacing variants count as the same song.
@@ -98,33 +98,25 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     let player = data.player_for(guild_id).await;
 
     let mut queued = Vec::new();
-    // Searches run concurrently; Extractor's own search_semaphore still caps actual yt-dlp processes.
-    let mut search_tasks = Vec::with_capacity(queries.len());
+    // Sequential search: one yt-dlp process at a time, so it never competes with a still-resolving earlier find.
     for query in &queries {
-        let extractor = data.extractor.clone();
-        let query = query.clone();
-        search_tasks.push(tokio::spawn(async move {
-            extractor.search(&query, author_id, true).await.ok()
-        }));
-    }
-    for (query, task) in queries.iter().zip(search_tasks) {
-        let Ok(Some(tracks)) = task.await else {
-            continue;
-        };
-        let Some(track) = tracks.into_iter().next() else {
+        let Ok(Some(track)) = data.extractor.search_top(query, author_id).await else {
             continue;
         };
         let title = track.escaped_title();
-        if player.play(track, false, channel_id).await.is_ok_and(|o| !o.failed) {
-            queued.push(title);
-            let mut history = data.vibe_history.entry(guild_id).or_default();
-            let key = vibe_history_key(query);
-            history.retain(|k| k != &key);
-            history.push_back(key);
-            while history.len() > VIBE_HISTORY_CAP {
-                history.pop_front();
-            }
+        queued.push(title);
+        let mut history = data.vibe_history.entry(guild_id).or_default();
+        let key = vibe_history_key(query);
+        history.retain(|k| k != &key);
+        history.push_back(key);
+        while history.len() > VIBE_HISTORY_CAP {
+            history.pop_front();
         }
+        // Backgrounded so resolving this one doesn't delay searching for the next candidate.
+        let player = player.clone();
+        tokio::spawn(async move {
+            let _ = player.play(track, false, channel_id).await;
+        });
     }
 
     if queued.is_empty() {
