@@ -324,6 +324,9 @@ impl PlayerActor {
                 self.state.current = None;
                 self.cancel_timers();
                 self.current_generation += 1;
+                if let Some(handle) = self.prefetch_task.take() {
+                    handle.abort();
+                }
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
                 }
@@ -371,6 +374,10 @@ impl PlayerActor {
             PlayerCommand::Leave { reply } => {
                 self.resolve_pending_play(false, false);
                 self.cancel_timers();
+                self.current_generation += 1;
+                if let Some(handle) = self.prefetch_task.take() {
+                    handle.abort();
+                }
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
                 }
@@ -505,6 +512,10 @@ impl PlayerActor {
                 // Regression fix: honour stay_connected before disconnecting on an empty channel.
                 if self.state.should_disconnect_when_empty() {
                     self.resolve_pending_play(false, false);
+                    self.current_generation += 1;
+                    if let Some(handle) = self.prefetch_task.take() {
+                        handle.abort();
+                    }
                     if let Some(handle) = self.current_handle.take() {
                         let _ = handle.stop();
                     }
@@ -954,11 +965,9 @@ async fn find_autoplay_track(
         }
     };
     for artist in similar {
-        if let Ok(tracks) = extractor.search(&artist, seed.requester_id, true).await {
-            if let Some(track) = tracks.into_iter().next() {
-                tracing::info!(%guild_id, %artist, title = %track.title, "autoplay: found a candidate");
-                return Some(track);
-            }
+        if let Ok(Some(track)) = extractor.search_top(&artist, seed.requester_id).await {
+            tracing::info!(%guild_id, %artist, title = %track.title, "autoplay: found a candidate");
+            return Some(track);
         }
     }
     tracing::info!(%guild_id, "autoplay: nothing playable found");

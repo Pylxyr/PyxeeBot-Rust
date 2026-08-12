@@ -12,4 +12,3 @@ pub mod lyrics;
 pub mod models;
 pub mod permissions;
 pub mod player;
-pub mod scoring;

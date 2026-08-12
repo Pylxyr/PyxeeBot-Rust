@@ -45,7 +45,7 @@ A Rust rewrite of the original Python PyxeeBot, built for a self-hosted Oracle C
 |---|---|
 | **Playback** | `join`, `leave`, `play` *(resolves a pasted URL directly, not just search terms)*, `playnext` *(queue at the front, ahead of everything else)*, `skip`, `stop`, `pause`, `resume`, `previous`, `loop`, `nowplaying` *(Pause/Skip/Loop/Close buttons, optional auto-refreshing message — see `NP_AUTO_REFRESH`)* |
 | **Queue** | `queue`, `clear`, `shuffle`, `move`, `remove`, `history`, `toptracks`, `toprequestors` |
-| **Search** | `search` *(select-menu to pick a result directly)*, `why` *(explains a search result's score breakdown)* |
+| **Search** | `search` *(select-menu to pick a result directly — no relevance ranking, yt-dlp's own result order)* |
 | **Playlists** | `playlist save`, `playlist load`, `playlist list`, `playlist show`, `playlist delete` |
 | **Curation** | `vibe` *(Last.fm-powered similar-artist discovery)*, `autoplay` *(auto-queues a similar track instead of going idle — requires `LASTFM_API_KEY`)* |
 | **Admin** | `stay` *(24/7 mode)*, `setdj`, `cleardj`, `dj`, `setprefix` *(per-guild custom prefix)*, `stats` |
@@ -68,8 +68,7 @@ The Now Playing message's Pause/Skip/Loop buttons enforce the identical checks a
 | Module | What it does |
 |---|---|
 | `player/` | One actor per guild (`PlayerActor`), driven by an mpsc command channel, broadcasting read-only state via a `watch` channel (`GuildPlayer` is the public handle). `PlayerState` (`queue.rs`) is a pure, fully-tested queue/loop-mode state machine, deliberately kept independent of songbird types. |
-| `scoring/` | Search-result ranking engine — title/uploader overlap, fuzzy matching, discouraged-token penalties, JP-original detection, recency/view bonuses, and more. Feeds both `!search` and `!vibe`. |
-| `extraction/` | yt-dlp subprocess wrapper plus two moka-backed caches (TTL-based, no manual expiry bookkeeping): a resolve cache for stream URLs and a search-results cache shared across `!play`/`!vibe`/`!search`. Two independent semaphores gate concurrency — `ytdlp_concurrent_extracts` for full per-video resolves, `ytdlp_curation_concurrency` for lighter `--flat-playlist` search listings. |
+| `extraction/` | yt-dlp subprocess wrapper plus two moka-backed caches (TTL-based, no manual expiry bookkeeping): a resolve cache for stream URLs and a search-results cache shared across `!play`/`!vibe`/`!search`. Two independent semaphores gate concurrency — `ytdlp_concurrent_extracts` for full per-video resolves, `ytdlp_curation_concurrency` for lighter `--flat-playlist` search listings. No result ranking — `!play`/`!vibe` take yt-dlp's own top hit directly; `!search` lists its raw order for you to pick from. |
 | `db/` | SQLite via sqlx, WAL mode. Guild settings are cached in-memory (`DashMap`) after first read. |
 | `events.rs` | Voice-state tracking (empty-channel/stay-connected disconnect logic, force-kick rejoin) and component-interaction routing (buttons, select menus). |
 | `lastfm.rs` | Minimal `artist.getsimilar` / `track.search` / `track.getsimilar` client for curation features. |
@@ -128,7 +127,6 @@ All configuration is via environment variables (typically a `.env` file next to 
 | `YTDLP_CONCURRENT_EXTRACTS` | `1` | full per-video resolves (stream URL) run at this concurrency — kept at 1 by default to avoid CPU contention on a single-vCPU box |
 | `YTDLP_CURATION_CONCURRENCY` | `3` | clamped 1–6; concurrency for lighter `--flat-playlist` search listings, separate from the above |
 | `NEAR_END_PREFETCH_SECONDS` | `30` | when to start resolving the next track |
-| `YTDLP_SEARCH_RESULTS` | `5` | clamped 1–10; candidates fetched for `!play`/`!vibe` |
 | `YTDLP_RESOLVE_CACHE_SIZE` | `128` | resolved-stream cache entries, min `16` |
 | `YTDLP_RESOLVE_CACHE_TTL_SECONDS` | `1800` | min `60` |
 | `YTDLP_SEARCH_CACHE_SIZE` | `200` | cached raw search-result sets, min `16` |
@@ -183,7 +181,7 @@ sudo apt install build-essential cmake libopus-dev
 cargo test --all-features
 ```
 
-Covers: scoring engine (golden-style ranking tests), player queue state machine (the exact regression classes fixed in the Python version — `total_duration` eviction accounting, `play_previous`, loop-mode requeue, `stay_connected`/idle guards), extraction argument builders, database round-trips, and UI content formatting.
+Covers: player queue state machine (the exact regression classes fixed in the Python version — `total_duration` eviction accounting, `play_previous`, loop-mode requeue, `stay_connected`/idle guards), extraction argument builders, database round-trips, and UI content formatting.
 
 Also runs in CI on every push to `main` (see [CI](#ci) below) — `build`/`deploy` won't proceed if this fails.
 

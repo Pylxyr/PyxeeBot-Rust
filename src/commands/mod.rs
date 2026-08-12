@@ -43,7 +43,6 @@ pub fn all() -> Vec<poise::Command<Arc<BotData>, Error>> {
         queue::mystats(),
         // search
         search::search(),
-        search::why(),
         // playlist (subcommands registered internally)
         playlist::playlist(),
         // curation

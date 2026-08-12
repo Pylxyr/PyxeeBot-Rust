@@ -6,7 +6,6 @@ use poise::serenity_prelude::{
 
 use crate::models::Track;
 use crate::player::PlayerSnapshot;
-use crate::scoring::ScoreBreakdown;
 
 pub const NP_PAUSE: &str = "np:pause";
 pub const NP_SKIP: &str = "np:skip";
@@ -84,19 +83,15 @@ pub fn now_playing_buttons(snapshot: &PlayerSnapshot) -> Vec<CreateActionRow> {
     ])]
 }
 
-/// Position numbers are absolute across pages (matches `!why <n>`); `query` shows on page 1 only.
-pub fn search_results_content(
-    query: Option<&str>,
-    results: &[(Track, ScoreBreakdown)],
-    page: usize,
-) -> String {
+/// Position numbers are absolute across pages; `query` shows on page 1 only.
+pub fn search_results_content(query: Option<&str>, results: &[Track], page: usize) -> String {
     let start = page * SEARCH_PAGE_SIZE;
     let lines: Vec<String> = results
         .iter()
         .enumerate()
         .skip(start)
         .take(SEARCH_PAGE_SIZE)
-        .map(|(i, (t, _))| {
+        .map(|(i, t)| {
             format!(
                 "`{}.` {} ({}) — {}",
                 i + 1,
@@ -112,7 +107,7 @@ pub fn search_results_content(
         None => format!("Search results — page {} of {total_pages}:", page + 1),
     };
     format!(
-        "{header}\n{}\n\nPick one below, use `!play <title>`, or `!why <n>` to see why a result ranked where it did.",
+        "{header}\n{}\n\nPick one below, or use `!play <title>`.",
         lines.join("\n")
     )
 }
@@ -133,17 +128,14 @@ fn truncate_label(s: &str, max_chars: usize) -> String {
 }
 
 /// Current page's results as select options (absolute indices), plus page-jump buttons if needed.
-pub fn search_select_menu(
-    results: &[(Track, ScoreBreakdown)],
-    page: usize,
-) -> Vec<CreateActionRow> {
+pub fn search_select_menu(results: &[Track], page: usize) -> Vec<CreateActionRow> {
     let start = page * SEARCH_PAGE_SIZE;
     let options: Vec<CreateSelectMenuOption> = results
         .iter()
         .enumerate()
         .skip(start)
         .take(SEARCH_PAGE_SIZE)
-        .map(|(i, (t, _))| {
+        .map(|(i, t)| {
             CreateSelectMenuOption::new(truncate_label(&t.escaped_title(), 25), i.to_string())
         })
         .collect();

@@ -17,7 +17,6 @@ use crate::extraction::Extractor;
 use crate::lastfm::LastFmClient;
 use crate::models::Track;
 use crate::player::GuildPlayer;
-use crate::scoring::ScoreBreakdown;
 
 pub struct BotData {
     pub config: Arc<Config>,
@@ -28,8 +27,8 @@ pub struct BotData {
     pub lyrics: crate::lyrics::LyricsClient,
     pub http_client: reqwest::Client,
     pub players: DashMap<serenity::GuildId, Arc<GuildPlayer>>,
-    /// Last search's ranked results + score breakdowns per guild, for `!why`.
-    pub search_debug: Cache<serenity::GuildId, Arc<Vec<(Track, ScoreBreakdown)>>>,
+    /// Last `!search` results per guild, so a select-menu/page click can look one up.
+    pub recent_searches: Cache<serenity::GuildId, Arc<Vec<Track>>>,
     /// Recently `!vibe`-queued song keys per guild — lets vibe favour songs it hasn't just played.
     pub vibe_history: DashMap<serenity::GuildId, std::collections::VecDeque<String>>,
     /// Vote-skip tallies per guild — lives here since the actor has no Discord cache access to count listeners.
@@ -175,7 +174,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     lyrics,
                     http_client,
                     players: DashMap::new(),
-                    search_debug: Cache::builder()
+                    recent_searches: Cache::builder()
                         .max_capacity(200)
                         .time_to_live(Duration::from_secs(30 * 60))
                         .build(),

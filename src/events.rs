@@ -137,7 +137,7 @@ async fn handle_search_pick(
     let Some(idx) = components::selected_index(interaction) else {
         return;
     };
-    let Some(results) = data.search_debug.get(&guild_id) else {
+    let Some(results) = data.recent_searches.get(&guild_id) else {
         let _ = interaction
             .create_response(
                 ctx,
@@ -146,7 +146,7 @@ async fn handle_search_pick(
             .await;
         return;
     };
-    let Some((track, _)) = results.get(idx) else {
+    let Some(track) = results.get(idx) else {
         return;
     };
 
@@ -206,7 +206,7 @@ async fn handle_search_page(
     else {
         return;
     };
-    let Some(results) = data.search_debug.get(&guild_id) else {
+    let Some(results) = data.recent_searches.get(&guild_id) else {
         let _ = interaction
             .create_response(
                 ctx,

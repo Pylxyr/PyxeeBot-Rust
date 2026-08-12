@@ -119,14 +119,27 @@ pub async fn join(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Aborts any live !nowplaying refresher and clears vote-skip tallies — shared by !stop and !leave.
+fn clear_guild_side_state(data: &crate::bot::BotData, guild_id: poise::serenity_prelude::GuildId) {
+    if let Some((_, handle)) = data.np_refreshers.remove(&guild_id) {
+        handle.abort();
+    }
+    data.skip_votes.remove(&guild_id);
+}
+
 /// Leave the voice channel and clear the queue.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    if !super::helpers::require_same_voice_channel(ctx).await? {
+        return Ok(());
+    }
     let player = ctx.data().player_for(guild_id).await;
-    match player.leave().await {
+    let result = player.leave().await;
+    clear_guild_side_state(ctx.data(), guild_id);
+    match result {
         Ok(true) => ctx.say("Left the voice channel.").await?,
         Ok(false) => ctx.say("Not currently in a voice channel.").await?,
         Err(e) => ctx.say(format!("Couldn't leave: {e}")).await?,
@@ -171,15 +184,18 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
     let say_fut = ctx.say(format!("Searching for `{query}`..."));
     let resolve_fut = async {
         if is_url {
-            data.extractor.extract_url(trimmed, author_id.get(), false).await
+            data.extractor
+                .extract_url(trimmed, author_id.get(), false)
+                .await
+                .map(|v| v.into_iter().next())
         } else {
-            data.extractor.search(&query, author_id.get(), false).await
+            data.extractor.search_top(&query, author_id.get()).await
         }
     };
     // Overlap the reply with the search instead of doing them in series.
     let (handle, resolve_result) = tokio::join!(say_fut, resolve_fut);
     let handle = handle?;
-    let tracks = match resolve_result {
+    let track = match resolve_result {
         Ok(t) => t,
         Err(e) => {
             tracing::warn!(guild_id = %guild_id, query = %query, elapsed = ?search_start.elapsed(), error = %e, "!play: search failed");
@@ -192,9 +208,9 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
             return Ok(());
         }
     };
-    tracing::info!(guild_id = %guild_id, query = %query, elapsed = ?search_start.elapsed(), results = tracks.len(), "!play: search finished");
+    tracing::info!(guild_id = %guild_id, query = %query, elapsed = ?search_start.elapsed(), found = track.is_some(), "!play: search finished");
 
-    let Some(track) = tracks.into_iter().next() else {
+    let Some(track) = track else {
         tracing::info!(guild_id = %guild_id, query = %query, "!play: no results");
         handle
             .edit(
@@ -356,6 +372,7 @@ pub async fn stop(ctx: Context<'_>) -> anyhow::Result<()> {
         return Ok(());
     }
     ctx.data().player_for(guild_id).await.stop();
+    clear_guild_side_state(ctx.data(), guild_id);
     ctx.say("Stopped and cleared the queue.").await?;
     Ok(())
 }

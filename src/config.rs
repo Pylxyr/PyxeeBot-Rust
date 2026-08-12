@@ -25,7 +25,6 @@ pub struct Config {
     pub ytdlp_curation_concurrency: usize,
     pub near_end_prefetch_secs: u64,
     pub opus_bitrate_kbps: u32,
-    pub ytdlp_search_results: usize,
     pub ytdlp_resolve_cache_size: u64,
     pub ytdlp_resolve_cache_ttl_secs: u64,
     pub ytdlp_search_cache_size: u64,
@@ -136,7 +135,6 @@ impl Config {
                 as usize,
             near_end_prefetch_secs: int_env("NEAR_END_PREFETCH_SECONDS", 30).max(0) as u64,
             opus_bitrate_kbps: int_env("OPUS_BITRATE_KBPS", 64).clamp(64, 256) as u32,
-            ytdlp_search_results: int_env("YTDLP_SEARCH_RESULTS", 5).clamp(1, 10) as usize,
             ytdlp_resolve_cache_size: int_env("YTDLP_RESOLVE_CACHE_SIZE", 128).max(16) as u64,
             ytdlp_resolve_cache_ttl_secs: int_env("YTDLP_RESOLVE_CACHE_TTL_SECONDS", 1800).max(60)
                 as u64,

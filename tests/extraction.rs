@@ -27,7 +27,6 @@ fn test_config() -> Config {
         ytdlp_curation_concurrency: 3,
         near_end_prefetch_secs: 30,
         opus_bitrate_kbps: 64,
-        ytdlp_search_results: 5,
         ytdlp_resolve_cache_size: 128,
         ytdlp_resolve_cache_ttl_secs: 1800,
         ytdlp_search_cache_size: 200,

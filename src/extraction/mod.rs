@@ -10,7 +10,6 @@ use tokio::sync::Semaphore;
 use crate::config::Config;
 use crate::errors::{BotError, Result};
 use crate::models::Track;
-use crate::scoring;
 
 pub use cache::{ResolveCache, ResolvedInfo, SearchCache};
 pub use ytdlp::{extract_args, extract_playlist_args, search_args};
@@ -55,18 +54,11 @@ impl Extractor {
         }
     }
 
-    /// Flat-playlist search: metadata listing only, then ranks results.
-    pub async fn search(
-        &self,
-        query: &str,
-        requester_id: u64,
-        curation_mode: bool,
-    ) -> Result<Vec<Track>> {
-        let count = self.config.ytdlp_search_results.max(1);
-        let entries = self.search_entries(query, count).await?;
-        let ranked = scoring::rank_entries(query, entries, curation_mode);
-        let mut tracks = Vec::with_capacity(ranked.len());
-        for (item, _) in &ranked {
+    /// Flat-playlist search: metadata listing only, in yt-dlp's own result order.
+    pub async fn search(&self, query: &str, requester_id: u64, count: usize) -> Result<Vec<Track>> {
+        let entries = self.search_entries(query, count.max(1)).await?;
+        let mut tracks = Vec::with_capacity(entries.len());
+        for item in &entries {
             let track = track_from_json(item, requester_id, query);
             self.prime_cache(&track.webpage_url, item).await;
             tracks.push(track);
@@ -74,24 +66,15 @@ impl Extractor {
         Ok(tracks)
     }
 
-    /// Same as `search` but returns score breakdowns and takes an explicit count.
-    pub async fn search_with_debug(
-        &self,
-        query: &str,
-        requester_id: u64,
-        curation_mode: bool,
-        count: usize,
-    ) -> Result<Vec<(Track, scoring::ScoreBreakdown)>> {
-        let count = count.max(1);
-        let entries = self.search_entries(query, count).await?;
-        let ranked = scoring::rank_entries(query, entries, curation_mode);
-        let mut out = Vec::with_capacity(ranked.len());
-        for (item, bd) in &ranked {
-            let track = track_from_json(item, requester_id, query);
-            self.prime_cache(&track.webpage_url, item).await;
-            out.push((track, bd.clone()));
-        }
-        Ok(out)
+    /// Single-result convenience: takes yt-dlp's own top hit directly, no ranking.
+    pub async fn search_top(&self, query: &str, requester_id: u64) -> Result<Option<Track>> {
+        let entries = self.search_entries(query, 1).await?;
+        let Some(item) = entries.first() else {
+            return Ok(None);
+        };
+        let track = track_from_json(item, requester_id, query);
+        self.prime_cache(&track.webpage_url, item).await;
+        Ok(Some(track))
     }
 
     /// Cache-then-yt-dlp; a cached entry with at least `count` results satisfies the request.

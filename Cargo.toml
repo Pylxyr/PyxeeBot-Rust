@@ -59,10 +59,6 @@ symphonia = { version = "0.5.5", features = ["isomp4", "aac"] }
 dashmap = "6.2.1"
 moka    = { version = "0.12.15", features = ["future", "sync"] }
 
-# Fuzzy matching (scoring engine)
-rapidfuzz = "0.5.0"
-regex     = "1"
-chrono    = { version = "0.4", default-features = false, features = ["clock"] }
 rand      = "0.10"
 
 # Required by songbird's own EventHandler trait
