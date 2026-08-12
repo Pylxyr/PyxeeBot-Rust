@@ -35,6 +35,7 @@ pub struct BotData {
     pub skip_votes: DashMap<serenity::GuildId, (String, HashSet<u64>)>,
     /// One live `!nowplaying` auto-refresher per guild — a new one aborts whatever was running.
     pub np_refreshers: DashMap<serenity::GuildId, tokio::task::AbortHandle>,
+    pub recent_logs: crate::logbuf::RecentLogs,
 }
 
 impl BotData {
@@ -68,7 +69,7 @@ impl BotData {
 
 pub type Context<'a> = poise::Context<'a, Arc<BotData>, anyhow::Error>;
 
-pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
+pub fn setup_logging(config: &Config) -> anyhow::Result<crate::logbuf::RecentLogs> {
     use tracing_subscriber::prelude::*;
 
     // LOG_LEVEL sets the baseline; pyxeebot/songbird/symphonia stay at least "debug" regardless.
@@ -84,9 +85,16 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
 
     // Always emit to stdout too (journalctl-visible under systemd); LOG_TO_FILE just adds a second sink.
     let stdout_layer = fmt::layer().with_ansi(false);
+    let recent_logs = crate::logbuf::RecentLogs::new();
+    // WARN+ only — the ring buffer is small and meant for "what broke", not routine INFO noise.
+    let recent_logs_layer = fmt::layer()
+        .with_writer(recent_logs.clone())
+        .with_ansi(false)
+        .with_filter(tracing_subscriber::filter::LevelFilter::WARN);
     let registry = tracing_subscriber::registry()
         .with(filter)
-        .with(stdout_layer);
+        .with(stdout_layer)
+        .with(recent_logs_layer);
 
     if config.log_to_file {
         let appender = tracing_appender::rolling::never(&config.log_dir, "musicbot.log");
@@ -98,10 +106,10 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<()> {
     } else {
         registry.init();
     }
-    Ok(())
+    Ok(recent_logs)
 }
 
-pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
+pub async fn run(config: Config, db: Database, recent_logs: crate::logbuf::RecentLogs) -> anyhow::Result<()> {
     let config = Arc::new(config);
     let owners: HashSet<serenity::UserId> = config
         .bot_owners
@@ -181,6 +189,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     vibe_history: DashMap::new(),
                     skip_votes: DashMap::new(),
                     np_refreshers: DashMap::new(),
+                    recent_logs: recent_logs.clone(),
                 });
 
                 if data.config.restore_queue_on_restart {
@@ -194,7 +203,7 @@ pub async fn run(config: Config, db: Database) -> anyhow::Result<()> {
                     let data = data.clone();
                     let http = ctx.http.clone();
                     tokio::spawn(async move {
-                        watch_resolve_failures(data, http).await;
+                        watch_failures(data, http).await;
                     });
                 }
 
@@ -263,32 +272,61 @@ async fn restore_queues(data: Arc<BotData>) {
 }
 
 /// Polls the extractor's failure streak and DMs bot owners once it crosses the threshold.
-async fn watch_resolve_failures(data: Arc<BotData>, http: Arc<serenity::Http>) {
+async fn watch_failures(data: Arc<BotData>, http: Arc<serenity::Http>) {
     const CHECK_INTERVAL: Duration = Duration::from_secs(60);
     const FAILURE_THRESHOLD: u32 = 5;
 
-    let mut already_alerted = false;
+    let mut resolve_alerted = false;
+    let mut playback_alerted = false;
     loop {
         tokio::time::sleep(CHECK_INTERVAL).await;
-        let streak = data.extractor.consecutive_resolve_failures();
-        if streak >= FAILURE_THRESHOLD && !already_alerted {
-            already_alerted = true;
-            tracing::warn!(streak, "watch_resolve_failures: threshold crossed, alerting owners");
-            let content = format!(
-                "⚠️ PyxeeBot has hit **{streak} consecutive** yt-dlp resolve failures. \
-                 Cookies or the PO-token provider may need attention — check `journalctl -u pyxeebotr`."
+
+        let resolve_streak = data.extractor.consecutive_resolve_failures();
+        if resolve_streak >= FAILURE_THRESHOLD && !resolve_alerted {
+            resolve_alerted = true;
+            let header =
+                format!("⚠️ PyxeeBot has hit **{resolve_streak} consecutive** yt-dlp resolve failures.");
+            alert_owners(&data, &http, &header).await;
+        } else if resolve_streak == 0 {
+            resolve_alerted = false;
+        }
+
+        let playback_streak = data.extractor.consecutive_playback_failures();
+        if playback_streak >= FAILURE_THRESHOLD && !playback_alerted {
+            playback_alerted = true;
+            let header = format!(
+                "⚠️ PyxeeBot has hit **{playback_streak} consecutive** playback failures (resolved fine, but songbird couldn't stream it)."
             );
-            for owner in &data.config.bot_owners {
-                let builder = serenity::CreateMessage::new().content(content.clone());
-                if let Err(e) = serenity::UserId::new(*owner)
-                    .direct_message(http.as_ref(), builder)
-                    .await
-                {
-                    tracing::warn!(owner, error = %e, "watch_resolve_failures: failed to DM owner");
-                }
-            }
-        } else if streak == 0 {
-            already_alerted = false;
+            alert_owners(&data, &http, &header).await;
+        } else if playback_streak == 0 {
+            playback_alerted = false;
+        }
+    }
+}
+
+/// Shared by both failure-streak alerts — appends a recent-log excerpt, truncated to fit a DM.
+async fn alert_owners(data: &BotData, http: &serenity::Http, header: &str) {
+    tracing::warn!(header, "watch_failures: alerting owners");
+    let logs = data.recent_logs.snapshot();
+    // Leaves headroom under Discord's 2000-char message limit for the header/fences/footer.
+    const LOG_BUDGET: usize = 1500;
+    let logs = if logs.len() > LOG_BUDGET {
+        let cutoff = logs.len() - LOG_BUDGET;
+        let safe_cutoff = (cutoff..=logs.len())
+            .find(|&i| logs.is_char_boundary(i))
+            .unwrap_or(logs.len());
+        format!("...(truncated)...\n{}", &logs[safe_cutoff..])
+    } else {
+        logs
+    };
+    let content = format!("{header}\n```\n{logs}\n```\nFull history: `journalctl -u pyxeebotr`.");
+    for owner in &data.config.bot_owners {
+        let builder = serenity::CreateMessage::new().content(content.clone());
+        if let Err(e) = serenity::UserId::new(*owner)
+            .direct_message(http, builder)
+            .await
+        {
+            tracing::warn!(owner, error = %e, "watch_failures: failed to DM owner");
         }
     }
 }

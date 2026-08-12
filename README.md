@@ -121,7 +121,6 @@ All configuration is via environment variables (typically a `.env` file next to 
 |---|---|---|
 | `YTDLP_COOKIES_FILE` | *(none)* | path, relative or absolute |
 | `YTDLP_JS_RUNTIME_PATH` | *(none)* | e.g. a `node`/`deno` path, for YouTube's JS challenge solving |
-| `YTDLP_POT_PROVIDER_BASE_URL` | *(none)* | PO token provider (e.g. bgutil-ytdlp-pot-provider) |
 | `YTDLP_SOCKET_TIMEOUT` | `15` | seconds, min `5` |
 | `YTDLP_PREFETCH_COUNT` | `1` | tracks ahead to speculatively resolve |
 | `YTDLP_CONCURRENT_EXTRACTS` | `1` | full per-video resolves (stream URL) run at this concurrency — kept at 1 by default to avoid CPU contention on a single-vCPU box |

@@ -24,6 +24,8 @@ pub struct Extractor {
     search_semaphore: Semaphore,
     /// Consecutive resolve/extract failures (search failures don't count) — reset on any success.
     resolve_failure_streak: AtomicU32,
+    /// Consecutive post-resolve playback failures (songbird/CDN errors) — reset on any success.
+    playback_failure_streak: AtomicU32,
 }
 
 impl Extractor {
@@ -39,6 +41,7 @@ impl Extractor {
             extract_semaphore,
             search_semaphore,
             resolve_failure_streak: AtomicU32::new(0),
+            playback_failure_streak: AtomicU32::new(0),
         }
     }
 
@@ -51,6 +54,19 @@ impl Extractor {
             self.resolve_failure_streak.store(0, Ordering::Relaxed);
         } else {
             self.resolve_failure_streak.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn consecutive_playback_failures(&self) -> u32 {
+        self.playback_failure_streak.load(Ordering::Relaxed)
+    }
+
+    /// Recorded by the player actor — a resolve success doesn't guarantee songbird can stream it.
+    pub fn record_playback_outcome(&self, ok: bool) {
+        if ok {
+            self.playback_failure_streak.store(0, Ordering::Relaxed);
+        } else {
+            self.playback_failure_streak.fetch_add(1, Ordering::Relaxed);
         }
     }
 

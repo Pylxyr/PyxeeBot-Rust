@@ -6,7 +6,7 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     let config = Config::from_env()?;
-    bot::setup_logging(&config)?;
+    let recent_logs = bot::setup_logging(&config)?;
 
     info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -16,5 +16,5 @@ async fn main() -> anyhow::Result<()> {
 
     let db = Database::new(&config.db_path).await?;
 
-    bot::run(config, db).await
+    bot::run(config, db, recent_logs).await
 }

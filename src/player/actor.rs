@@ -87,7 +87,7 @@ pub enum PlayerCommand {
     /// Normal track end; ignored if the generation no longer matches (already superseded, e.g. a skip).
     TrackEnded(u64),
     /// Same generation check as TrackEnded, but for a playback failure — logged distinctly, not requeued.
-    TrackErrored(u64),
+    TrackErrored(u64, Option<String>),
     ScheduleEmptyDisconnect,
     CancelEmptyDisconnect,
     IdleTimeout,
@@ -109,9 +109,16 @@ struct TrackEndNotifier {
 
 #[async_trait::async_trait]
 impl SongbirdEventHandler for TrackEndNotifier {
-    async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
         let cmd = if self.errored {
-            PlayerCommand::TrackErrored(self.generation)
+            // Debug-formatted, not matched: songbird's error enums are non-exhaustive and version-specific.
+            let reason = match ctx {
+                EventContext::Track(states) => {
+                    states.first().map(|(state, _)| format!("{:?}", state.playing))
+                }
+                _ => None,
+            };
+            PlayerCommand::TrackErrored(self.generation, reason)
         } else {
             PlayerCommand::TrackEnded(self.generation)
         };
@@ -478,10 +485,10 @@ impl PlayerActor {
                 }
             }
             PlayerCommand::TrackEnded(generation) => {
-                self.handle_track_finished(generation, false).await;
+                self.handle_track_finished(generation, None).await;
             }
-            PlayerCommand::TrackErrored(generation) => {
-                self.handle_track_finished(generation, true).await;
+            PlayerCommand::TrackErrored(generation, reason) => {
+                self.handle_track_finished(generation, Some(reason.unwrap_or_else(|| "unknown error".to_owned()))).await;
             }
             PlayerCommand::ScheduleEmptyDisconnect => {
                 if self.empty_timer.is_none() {
@@ -641,7 +648,7 @@ impl PlayerActor {
     }
 
     /// Shared by TrackEnded/TrackErrored; an errored track isn't requeued for loop mode.
-    async fn handle_track_finished(&mut self, generation: u64, errored: bool) {
+    async fn handle_track_finished(&mut self, generation: u64, error_reason: Option<String>) {
         if generation != self.current_generation
             || self.last_finished_generation == Some(generation)
         {
@@ -651,9 +658,10 @@ impl PlayerActor {
         self.current_handle = None;
         self.is_paused = false;
         let finished = self.state.current.clone();
-        if errored {
+        self.extractor.record_playback_outcome(error_reason.is_none());
+        if let Some(reason) = &error_reason {
             if let Some(t) = &finished {
-                tracing::warn!(guild_id = %self.guild_id, title = %t.title, "track errored during playback");
+                tracing::warn!(guild_id = %self.guild_id, title = %t.title, reason = %reason, "track errored during playback");
             }
             self.handle_resolve_failure().await;
         } else {

@@ -53,10 +53,6 @@ pub fn extract_args(
         args.push(format!("youtube:{}", youtube_args.join(";")));
     }
 
-    if let Some(base_url) = &config.ytdlp_pot_provider_base_url {
-        args.push("--extractor-args".to_owned());
-        args.push(format!("youtubepot-bgutilhttp:base_url={base_url}"));
-    }
     args.push(query_or_url.to_owned());
     args
 }
@@ -87,10 +83,6 @@ pub fn extract_playlist_args(config: &Config, playlist_url: &str, limit: usize) 
     if let Some(js_runtime) = &config.ytdlp_js_runtime_path {
         args.push("--extractor-args".to_owned());
         args.push(format!("youtube:jsi={js_runtime}"));
-    }
-    if let Some(base_url) = &config.ytdlp_pot_provider_base_url {
-        args.push("--extractor-args".to_owned());
-        args.push(format!("youtubepot-bgutilhttp:base_url={base_url}"));
     }
     args.push(playlist_url.to_owned());
     args
