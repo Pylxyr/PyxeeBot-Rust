@@ -13,11 +13,11 @@ impl RecentLogs {
         Self(Arc::new(Mutex::new(VecDeque::with_capacity(MAX_LINES))))
     }
 
-    /// Oldest-first snapshot, one line per entry, ready to drop into a code block.
+    /// Oldest-first snapshot, one line per entry; recovers from poisoning instead of panicking.
     pub fn snapshot(&self) -> String {
         self.0
             .lock()
-            .expect("recent logs mutex poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .iter()
             .cloned()
             .collect::<Vec<_>>()
@@ -25,7 +25,7 @@ impl RecentLogs {
     }
 
     fn push_line(&self, line: &str) {
-        let mut buf = self.0.lock().expect("recent logs mutex poisoned");
+        let mut buf = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if buf.len() >= MAX_LINES {
             buf.pop_front();
         }

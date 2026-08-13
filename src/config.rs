@@ -22,7 +22,6 @@ pub struct Config {
     pub ytdlp_prefetch_count: usize,
     pub ytdlp_concurrent_extracts: usize,
     pub ytdlp_curation_concurrency: usize,
-    pub near_end_prefetch_secs: u64,
     pub opus_bitrate_kbps: u32,
     pub ytdlp_resolve_cache_size: u64,
     pub ytdlp_resolve_cache_ttl_secs: u64,
@@ -109,30 +108,31 @@ impl Config {
             db_path: data_dir.join("musicbot.sqlite3"),
             log_to_file: bool_env("LOG_TO_FILE", true),
             log_dir,
-            max_queue_size: int_env("MAX_QUEUE_SIZE", 100).max(1) as usize,
-            max_queue_size_per_user: int_env("MAX_QUEUE_SIZE_PER_USER", 0).max(0) as usize,
-            max_playlist_size: int_env("MAX_PLAYLIST_SIZE", 25).max(1) as usize,
-            idle_timeout_secs: int_env("IDLE_TIMEOUT_SECONDS", 180).max(30) as u64,
-            empty_channel_timeout_secs: int_env("EMPTY_CHANNEL_TIMEOUT_SECONDS", 60).max(15) as u64,
+            max_queue_size: int_env("MAX_QUEUE_SIZE", 100)?.max(1) as usize,
+            max_queue_size_per_user: int_env("MAX_QUEUE_SIZE_PER_USER", 0)?.max(0) as usize,
+            max_playlist_size: int_env("MAX_PLAYLIST_SIZE", 25)?.max(1) as usize,
+            idle_timeout_secs: int_env("IDLE_TIMEOUT_SECONDS", 180)?.max(30) as u64,
+            empty_channel_timeout_secs: int_env("EMPTY_CHANNEL_TIMEOUT_SECONDS", 60)?.max(15)
+                as u64,
             ytdlp_cookies_file,
             ytdlp_cache_dir,
             ytdlp_js_runtime_path,
-            ytdlp_socket_timeout: int_env("YTDLP_SOCKET_TIMEOUT", 15).max(5) as u32,
-            ytdlp_prefetch_count: int_env("YTDLP_PREFETCH_COUNT", 1).max(0) as usize,
-            ytdlp_concurrent_extracts: int_env("YTDLP_CONCURRENT_EXTRACTS", 1).max(1) as usize,
-            ytdlp_curation_concurrency: int_env("YTDLP_CURATION_CONCURRENCY", 3).clamp(1, 6)
+            ytdlp_socket_timeout: int_env("YTDLP_SOCKET_TIMEOUT", 15)?.max(5) as u32,
+            ytdlp_prefetch_count: int_env("YTDLP_PREFETCH_COUNT", 1)?.max(0) as usize,
+            ytdlp_concurrent_extracts: int_env("YTDLP_CONCURRENT_EXTRACTS", 1)?.max(1) as usize,
+            ytdlp_curation_concurrency: int_env("YTDLP_CURATION_CONCURRENCY", 3)?.clamp(1, 6)
                 as usize,
-            near_end_prefetch_secs: int_env("NEAR_END_PREFETCH_SECONDS", 30).max(0) as u64,
-            opus_bitrate_kbps: int_env("OPUS_BITRATE_KBPS", 64).clamp(64, 256) as u32,
-            ytdlp_resolve_cache_size: int_env("YTDLP_RESOLVE_CACHE_SIZE", 128).max(16) as u64,
-            ytdlp_resolve_cache_ttl_secs: int_env("YTDLP_RESOLVE_CACHE_TTL_SECONDS", 1800).max(60)
+            opus_bitrate_kbps: int_env("OPUS_BITRATE_KBPS", 64)?.clamp(64, 256) as u32,
+            ytdlp_resolve_cache_size: int_env("YTDLP_RESOLVE_CACHE_SIZE", 128)?.max(16) as u64,
+            ytdlp_resolve_cache_ttl_secs: int_env("YTDLP_RESOLVE_CACHE_TTL_SECONDS", 1800)?
+                .max(60) as u64,
+            ytdlp_search_cache_size: int_env("YTDLP_SEARCH_CACHE_SIZE", 200)?.max(16) as u64,
+            ytdlp_search_cache_ttl_secs: int_env("YTDLP_SEARCH_CACHE_TTL_SECONDS", 600)?.max(30)
                 as u64,
-            ytdlp_search_cache_size: int_env("YTDLP_SEARCH_CACHE_SIZE", 200).max(16) as u64,
-            ytdlp_search_cache_ttl_secs: int_env("YTDLP_SEARCH_CACHE_TTL_SECONDS", 600).max(30)
+            ytdlp_extract_timeout_secs: int_env("YTDLP_EXTRACT_TIMEOUT_SECONDS", 45)?.max(5)
                 as u64,
-            ytdlp_extract_timeout_secs: int_env("YTDLP_EXTRACT_TIMEOUT_SECONDS", 45).max(5) as u64,
             np_auto_refresh: bool_env("NP_AUTO_REFRESH", false),
-            np_auto_refresh_interval: int_env("NP_AUTO_REFRESH_INTERVAL", 30).max(15) as u32,
+            np_auto_refresh_interval: int_env("NP_AUTO_REFRESH_INTERVAL", 30)?.max(15) as u32,
             error_announce: bool_env("ERROR_ANNOUNCE", true),
             lastfm_api_key,
             restore_queue_on_restart: bool_env("RESTORE_QUEUE_ON_RESTART", false),
@@ -155,13 +155,14 @@ fn env_str_or(name: &str, default: &str) -> String {
     }
 }
 
-fn int_env(name: &str, default: i64) -> i64 {
+fn int_env(name: &str, default: i64) -> Result<i64> {
     let raw = std::env::var(name).unwrap_or_default();
     let raw = raw.trim();
     if raw.is_empty() {
-        return default;
+        return Ok(default);
     }
-    raw.parse().unwrap_or(default)
+    raw.parse()
+        .with_context(|| format!("{name}: invalid integer {raw:?}"))
 }
 
 fn bool_env(name: &str, default: bool) -> bool {

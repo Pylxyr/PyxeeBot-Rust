@@ -25,6 +25,7 @@ pub struct PlayerState {
     pub autoplay: bool,
     pub total_duration: i64,
     pub max_queue_size: usize,
+    dirty: bool,
 }
 
 impl PlayerState {
@@ -38,7 +39,13 @@ impl PlayerState {
             autoplay,
             total_duration: 0,
             max_queue_size,
+            dirty: false,
         }
+    }
+
+    /// Checks and clears the dirty flag — lets the caller skip snapshot work when nothing changed.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.dirty, false)
     }
 
     pub fn is_full(&self) -> bool {
@@ -54,6 +61,7 @@ impl PlayerState {
 
     /// Evicts the front at capacity — mirrors Python's `deque(maxlen=N).append`.
     pub fn push_back(&mut self, track: Track) {
+        self.dirty = true;
         if self.queue.len() >= self.max_queue_size {
             if let Some(evicted) = self.queue.pop_front() {
                 self.total_duration -= evicted.duration;
@@ -65,6 +73,7 @@ impl PlayerState {
 
     /// Evicts the back at capacity — the Python version skipped this, drifting `total_duration`.
     pub fn push_front(&mut self, track: Track) {
+        self.dirty = true;
         if self.queue.len() >= self.max_queue_size {
             if let Some(evicted) = self.queue.pop_back() {
                 self.total_duration -= evicted.duration;
@@ -77,6 +86,7 @@ impl PlayerState {
     pub fn pop_front(&mut self) -> Option<Track> {
         let track = self.queue.pop_front();
         if let Some(t) = &track {
+            self.dirty = true;
             self.total_duration -= t.duration;
         }
         track
@@ -84,12 +94,20 @@ impl PlayerState {
 
     /// Moves `current` into bounded history and pulls the next track off the queue.
     pub fn advance(&mut self) -> Option<Track> {
+        self.dirty = true;
         if let Some(prev) = self.current.take() {
             self.history.push(prev);
             if self.history.len() > MAX_HISTORY {
                 self.history.remove(0);
             }
         }
+        self.current = self.pop_front();
+        self.current.clone()
+    }
+
+    /// Drops `current` (never played) and pulls in the next queued track, if any.
+    pub fn discard_current(&mut self) -> Option<Track> {
+        self.dirty = true;
         self.current = self.pop_front();
         self.current.clone()
     }
@@ -108,6 +126,7 @@ impl PlayerState {
         let Some(previous) = self.history.pop() else {
             return false;
         };
+        self.dirty = true;
         if let Some(current) = self.current.take() {
             self.push_front(current);
         }
@@ -117,18 +136,21 @@ impl PlayerState {
 
     pub fn clear(&mut self) -> usize {
         let n = self.queue.len();
+        self.dirty = true;
         self.queue.clear();
         self.total_duration = 0;
         n
     }
 
     pub fn shuffle(&mut self) {
+        self.dirty = true;
         self.queue.make_contiguous().shuffle(&mut rand::rng());
     }
 
     pub fn remove(&mut self, position: usize) -> Option<Track> {
         let track = self.queue.remove(position);
         if let Some(t) = &track {
+            self.dirty = true;
             self.total_duration -= t.duration;
         }
         track
@@ -158,6 +180,7 @@ impl PlayerState {
             return false;
         }
         if let Some(track) = self.queue.remove(from) {
+            self.dirty = true;
             self.queue.insert(to, track);
             true
         } else {

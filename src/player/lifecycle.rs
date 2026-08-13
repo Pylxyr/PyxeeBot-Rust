@@ -11,6 +11,7 @@ pub async fn connect(
     songbird: &Songbird,
     guild_id: GuildId,
     channel_id: ChannelId,
+    opus_bitrate_kbps: u32,
 ) -> Result<Arc<Mutex<Call>>> {
     tracing::info!(guild_id = %guild_id, channel_id = %channel_id, "lifecycle::connect: joining");
     let start = std::time::Instant::now();
@@ -18,6 +19,14 @@ pub async fn connect(
         .join(guild_id, channel_id)
         .await
         .map_err(|e| BotError::Voice(e.to_string()));
+    // applied on every (re)connect — songbird resets driver config per-Call
+    if let Ok(call) = &result {
+        call.lock()
+            .await
+            .set_bitrate(songbird::driver::Bitrate::Bits(
+                opus_bitrate_kbps as i32 * 1000,
+            ));
+    }
     match &result {
         Ok(_) => {
             tracing::info!(guild_id = %guild_id, elapsed = ?start.elapsed(), "lifecycle::connect: joined")

@@ -125,7 +125,6 @@ All configuration is via environment variables (typically a `.env` file next to 
 | `YTDLP_PREFETCH_COUNT` | `1` | tracks ahead to speculatively resolve |
 | `YTDLP_CONCURRENT_EXTRACTS` | `1` | full per-video resolves (stream URL) run at this concurrency — kept at 1 by default to avoid CPU contention on a single-vCPU box |
 | `YTDLP_CURATION_CONCURRENCY` | `3` | clamped 1–6; concurrency for lighter `--flat-playlist` search listings, separate from the above |
-| `NEAR_END_PREFETCH_SECONDS` | `30` | when to start resolving the next track |
 | `YTDLP_RESOLVE_CACHE_SIZE` | `128` | resolved-stream cache entries, min `16` |
 | `YTDLP_RESOLVE_CACHE_TTL_SECONDS` | `1800` | min `60` |
 | `YTDLP_SEARCH_CACHE_SIZE` | `200` | cached raw search-result sets, min `16` |
@@ -136,7 +135,7 @@ All configuration is via environment variables (typically a `.env` file next to 
 
 | Variable | Default | Notes |
 |---|---|---|
-| `OPUS_BITRATE_KBPS` | `64` | clamped 64–256 |
+| `OPUS_BITRATE_KBPS` | `64` | clamped 64–256; applied to the voice connection's Opus encoder on every (re)connect |
 | `ERROR_ANNOUNCE` | `true` | whether command errors get an in-channel reply (they're always logged either way) |
 | `NP_AUTO_REFRESH` | `false` | if set, `!nowplaying` edits its message in place every `NP_AUTO_REFRESH_INTERVAL` seconds instead of being a one-shot snapshot. Stops once nothing's playing, the edit starts failing, or after 2 hours — whichever comes first |
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | seconds, min `15` |

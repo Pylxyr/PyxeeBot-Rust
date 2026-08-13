@@ -41,9 +41,8 @@ pub async fn search(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<(
         return Ok(());
     }
 
-    ctx.data()
-        .recent_searches
-        .insert(guild_id, Arc::new(results.clone()));
+    let results = Arc::new(results);
+    ctx.data().recent_searches.insert(guild_id, results.clone());
     let content = crate::components::search_results_content(Some(&query), &results, 0);
     let menu = crate::components::search_select_menu(&results, 0);
 

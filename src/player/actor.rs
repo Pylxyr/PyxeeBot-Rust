@@ -225,8 +225,11 @@ impl PlayerActor {
         }
     }
 
-    /// Fire-and-forget; no-ops when the hash is unchanged.
+    /// Fire-and-forget; no-ops when nothing queue-related changed since the last call.
     fn persist_queue_snapshot(&mut self) {
+        if !self.state.take_dirty() {
+            return;
+        }
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for t in self.state.current.iter().chain(self.state.queue.iter()) {
             t.query.hash(&mut hasher);
@@ -400,7 +403,13 @@ impl PlayerActor {
                 let _ = reply.send(result);
             }
             PlayerCommand::Connect { channel_id, reply } => {
-                let outcome = lifecycle::connect(&self.songbird, self.guild_id, channel_id).await;
+                let outcome = lifecycle::connect(
+                    &self.songbird,
+                    self.guild_id,
+                    channel_id,
+                    self.config.opus_bitrate_kbps,
+                )
+                .await;
                 let result = match outcome {
                     Ok(call) => {
                         self.call = Some(call);
@@ -468,7 +477,14 @@ impl PlayerActor {
                 if !self.state.stay_connected {
                     return;
                 }
-                match lifecycle::connect(&self.songbird, self.guild_id, channel_id).await {
+                let outcome = lifecycle::connect(
+                    &self.songbird,
+                    self.guild_id,
+                    channel_id,
+                    self.config.opus_bitrate_kbps,
+                )
+                .await;
+                match outcome {
                     Ok(call) => {
                         self.call = Some(call);
                         self.channel_id = Some(channel_id);
@@ -628,7 +644,13 @@ impl PlayerActor {
         }
         tracing::info!(guild_id = %self.guild_id, channel_id = %channel_id, "handle_play: connecting to voice channel");
         let connect_start = std::time::Instant::now();
-        let call = lifecycle::connect(&self.songbird, self.guild_id, channel_id).await?;
+        let call = lifecycle::connect(
+            &self.songbird,
+            self.guild_id,
+            channel_id,
+            self.config.opus_bitrate_kbps,
+        )
+        .await?;
         tracing::info!(guild_id = %self.guild_id, elapsed = ?connect_start.elapsed(), "handle_play: voice connect finished");
         self.call = Some(call);
         self.channel_id = Some(channel_id);
@@ -743,7 +765,7 @@ impl PlayerActor {
 
     /// Like `advance_and_resolve_next`, but for a track abandoned before it ever played.
     fn discard_current_and_advance(&mut self) {
-        self.state.current = self.state.pop_front();
+        self.state.discard_current();
         self.retried_current_track = false;
         if self.state.current.is_some() {
             self.spawn_resolve_for_current();
@@ -768,10 +790,9 @@ impl PlayerActor {
         let extractor = self.extractor.clone();
         let self_tx = self.self_tx.clone();
         let guild_id = self.guild_id;
-        let title = track.title.clone();
         // Not "android" — it only ever gave us HLS-only formats.
         let client_override = self.retried_current_track.then_some("tv");
-        tracing::info!(%guild_id, %title, generation, retry = self.retried_current_track, "spawn_resolve_for_current: resolving in background");
+        tracing::info!(%guild_id, title = %track.title, generation, retry = self.retried_current_track, "spawn_resolve_for_current: resolving in background");
         tokio::spawn(async move {
             let result = extractor.resolve_stream(&track, client_override).await;
             let _ = self_tx.send(PlayerCommand::ResolveDone { generation, result });
@@ -877,10 +898,9 @@ impl PlayerActor {
 
         let db = self.db.clone();
         let guild_id = self.guild_id.get();
-        let title = track.title.clone();
-        let webpage_url = track.webpage_url.clone();
         let requester_id = track.requester_id;
         let duration = track.duration;
+        let Track { title, webpage_url, .. } = track;
         tokio::spawn(async move {
             if let Err(e) = db
                 .add_play_history(guild_id, &title, &webpage_url, requester_id, duration)

@@ -32,7 +32,7 @@ pub fn now_playing_embed(snapshot: &PlayerSnapshot) -> CreateEmbed {
     };
     let mut embed = CreateEmbed::new()
         .author(CreateEmbedAuthor::new(state))
-        .title(track.escaped_title())
+        .title(truncate_label(&track.escaped_title(), 256))
         .url(&track.webpage_url)
         .color(BRAND_COLOR)
         .description(format!(

@@ -10,6 +10,26 @@ use crate::config::Config;
 use crate::constants::{YTDLP_FORMAT, YTDLP_RETRY_FORMAT};
 use crate::errors::{BotError, Result};
 
+/// Caps a single yt-dlp invocation's stdout/stderr so a runaway process can't exhaust RAM.
+const MAX_YTDLP_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Reads up to the cap, then keeps draining (discarding) so the child never blocks on a full pipe.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> String {
+    let mut buf = Vec::with_capacity(64 * 1024);
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        if buf.len() < MAX_YTDLP_OUTPUT_BYTES {
+            let remaining = MAX_YTDLP_OUTPUT_BYTES - buf.len();
+            buf.extend_from_slice(&chunk[..n.min(remaining)]);
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
 /// Pure function (testable without spawning); `client_override` retries with a different player client.
 pub fn extract_args(
     config: &Config,
@@ -108,15 +128,7 @@ pub async fn run_ytdlp(config: &Config, args: &[String]) -> Result<Vec<Value>> {
     let mut stderr = child.stderr.take().expect("stderr was piped");
 
     let read_fut = async {
-        let mut out_buf = String::new();
-        let mut err_buf = String::new();
-        let (out_res, err_res) = tokio::join!(
-            stdout.read_to_string(&mut out_buf),
-            stderr.read_to_string(&mut err_buf),
-        );
-        out_res.ok();
-        err_res.ok();
-        (out_buf, err_buf)
+        tokio::join!(read_capped(&mut stdout), read_capped(&mut stderr))
     };
 
     let timeout_secs = config.ytdlp_extract_timeout_secs;
