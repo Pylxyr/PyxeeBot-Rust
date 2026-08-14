@@ -10,7 +10,6 @@ use sqlx::SqlitePool;
 
 pub use queries::{PlaylistEntry, PlaylistSummary, QueueEntryRef, TopPlayed, TopRequester, UserStats};
 
-/// Rows of play_history kept per guild, trimmed every `TRIM_EVERY_N_WRITES` inserts.
 const HISTORY_MAX_ROWS: i64 = 5000;
 const TRIM_EVERY_N_WRITES: u64 = 50;
 const CHECKPOINT_EVERY_N_WRITES: u64 = 100;
@@ -35,17 +34,15 @@ impl Database {
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5))
             .pragma("synchronous", "NORMAL")
-            // Explicit bound so per-connection cache use is predictable on a 1GB box.
+
             .pragma("cache_size", "-4000");
 
-        // WAL has one writer regardless of pool size; more connections just idles more cache.
         const MAX_CONNECTIONS: u32 = 4;
         let pool = SqlitePoolOptions::new()
             .max_connections(MAX_CONNECTIONS)
             .connect_with(options)
             .await?;
 
-        // IF NOT EXISTS DDL — safe against a pre-existing Python-created database.
         sqlx::migrate!("./src/db/migrations").run(&pool).await?;
 
         Ok(Self {
@@ -64,7 +61,6 @@ impl Database {
         self.write_count.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Full checkpoint — the PASSIVE one after every N writes no-ops while a reader is open.
     pub async fn checkpoint_truncate(&self) -> sqlx::Result<()> {
         sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
             .execute(&self.pool)

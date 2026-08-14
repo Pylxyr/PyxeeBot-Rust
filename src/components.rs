@@ -16,7 +16,6 @@ pub const SEARCH_PAGE_PREFIX: &str = "search:page:";
 pub const SEARCH_PAGE_SIZE: usize = 5;
 pub const SEARCH_MAX_PAGES: usize = 3;
 
-/// PyxeeBot's brand orange, matching the website.
 const BRAND_COLOR: u32 = 0xF0_A8_68;
 
 pub fn now_playing_embed(snapshot: &PlayerSnapshot) -> CreateEmbed {
@@ -83,7 +82,6 @@ pub fn now_playing_buttons(snapshot: &PlayerSnapshot) -> Vec<CreateActionRow> {
     ])]
 }
 
-/// Position numbers are absolute across pages; `query` shows on page 1 only.
 pub fn search_results_content(query: Option<&str>, results: &[Track], page: usize) -> String {
     let start = page * SEARCH_PAGE_SIZE;
     let lines: Vec<String> = results
@@ -112,12 +110,10 @@ pub fn search_results_content(query: Option<&str>, results: &[Track], page: usiz
     )
 }
 
-/// Number of pages needed for `total` results, capped at SEARCH_MAX_PAGES.
 pub fn search_page_count(total: usize) -> usize {
     total.div_ceil(SEARCH_PAGE_SIZE).clamp(1, SEARCH_MAX_PAGES)
 }
 
-/// Discord caps select-menu labels at 25 chars — truncate rather than have the option rejected.
 fn truncate_label(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_owned();
@@ -127,7 +123,6 @@ fn truncate_label(s: &str, max_chars: usize) -> String {
     t
 }
 
-/// Current page's results as select options (absolute indices), plus page-jump buttons if needed.
 pub fn search_select_menu(results: &[Track], page: usize) -> Vec<CreateActionRow> {
     let start = page * SEARCH_PAGE_SIZE;
     let options: Vec<CreateSelectMenuOption> = results
@@ -164,7 +159,6 @@ pub fn search_select_menu(results: &[Track], page: usize) -> Vec<CreateActionRow
     vec![select_row, CreateActionRow::Buttons(buttons)]
 }
 
-/// The standard "acknowledge + edit" response for a component interaction.
 pub fn update_response(
     content: impl Into<String>,
     components: Vec<CreateActionRow>,
@@ -176,7 +170,6 @@ pub fn update_response(
     )
 }
 
-/// Same as `update_response`, but for Now Playing — also clears legacy plain-text content.
 pub fn update_response_embed(
     embed: CreateEmbed,
     components: Vec<CreateActionRow>,

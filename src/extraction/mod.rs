@@ -18,13 +18,13 @@ pub struct Extractor {
     config: Arc<Config>,
     cache: ResolveCache,
     search_cache: SearchCache,
-    /// Full per-video extraction: CPU-heavy, kept tight (default 1).
+
     extract_semaphore: Semaphore,
-    /// `--flat-playlist` search listings: lighter, separate budget.
+
     search_semaphore: Semaphore,
-    /// Consecutive resolve/extract failures (search failures don't count) — reset on any success.
+
     resolve_failure_streak: AtomicU32,
-    /// Consecutive post-resolve playback failures (songbird/CDN errors) — reset on any success.
+
     playback_failure_streak: AtomicU32,
 }
 
@@ -61,7 +61,6 @@ impl Extractor {
         self.playback_failure_streak.load(Ordering::Relaxed)
     }
 
-    /// Recorded by the player actor — a resolve success doesn't guarantee songbird can stream it.
     pub fn record_playback_outcome(&self, ok: bool) {
         if ok {
             self.playback_failure_streak.store(0, Ordering::Relaxed);
@@ -70,7 +69,6 @@ impl Extractor {
         }
     }
 
-    /// Flat-playlist search: metadata listing only, in yt-dlp's own result order.
     pub async fn search(&self, query: &str, requester_id: u64, count: usize) -> Result<Vec<Track>> {
         let entries = self.search_entries(query, count.max(1)).await?;
         let mut tracks = Vec::with_capacity(entries.len());
@@ -82,7 +80,6 @@ impl Extractor {
         Ok(tracks)
     }
 
-    /// Single-result convenience: takes yt-dlp's own top hit directly, no ranking.
     pub async fn search_top(&self, query: &str, requester_id: u64) -> Result<Option<Track>> {
         let entries = self.search_entries(query, 1).await?;
         let Some(item) = entries.first() else {
@@ -93,7 +90,6 @@ impl Extractor {
         Ok(Some(track))
     }
 
-    /// Cache-then-yt-dlp; a cached entry with at least `count` results satisfies the request.
     async fn search_entries(&self, query: &str, count: usize) -> Result<Vec<Value>> {
         let key = query.trim().to_lowercase();
         if let Some(cached) = self.search_cache.get(&key, count).await {
@@ -105,7 +101,6 @@ impl Extractor {
         Ok(entries)
     }
 
-    /// Direct URL only — always passes `--no-playlist`; use `extract_playlist` for those.
     pub async fn extract_url(
         &self,
         url: &str,
@@ -130,7 +125,6 @@ impl Extractor {
         Ok(tracks)
     }
 
-    /// Doesn't count toward the resolve-failure streak — a listing failure isn't a video failure.
     pub async fn extract_playlist(
         &self,
         url: &str,
@@ -139,7 +133,7 @@ impl Extractor {
     ) -> Result<Vec<Track>> {
         let args = ytdlp::extract_playlist_args(&self.config, url, limit);
         let entries = self.run_search(&args).await?;
-        // Still capped here: --playlist-end is a hint, not a hard guarantee.
+
         let mut tracks = Vec::with_capacity(entries.len().min(limit));
         for item in entries.iter().take(limit) {
             let track = track_from_json(item, requester_id, url);
@@ -149,7 +143,6 @@ impl Extractor {
         Ok(tracks)
     }
 
-    /// `client_override` selects a specific YouTube player client — pass one on a retry.
     pub async fn resolve_stream(
         &self,
         track: &Track,
@@ -178,7 +171,6 @@ impl Extractor {
         Ok(info)
     }
 
-    /// Non-blocking prefetch sibling of `resolve_stream`: `None` if no permit is free right now.
     pub async fn try_resolve_stream(&self, track: &Track) -> Option<Result<ResolvedInfo>> {
         if let Some(cached) = self.cache.get(&track.webpage_url).await {
             return Some(Ok(cached));
@@ -214,7 +206,6 @@ impl Extractor {
         self.cache.invalidate(webpage_url).await;
     }
 
-    /// Caches resolve info from an already-extracted entry; flat-playlist entries have none and are skipped.
     async fn prime_cache(&self, webpage_url: &str, item: &Value) {
         if item.get("http_headers").is_none() {
             return;
@@ -316,13 +307,12 @@ fn resolved_info_from_json(item: &Value) -> Result<ResolvedInfo> {
     })
 }
 
-/// Discards a filesize/filesize_approx too small for the duration, rather than truncating playback.
 fn sanitize_content_length(reported: Option<u64>, duration_secs: Option<f64>) -> Option<u64> {
     let bytes = reported?;
     let Some(duration) = duration_secs.filter(|d| *d > 0.0) else {
         return Some(bytes);
     };
-    // 8 kbps floor: anything slower than this is a bogus estimate, not a real audio file.
+
     const MIN_BYTES_PER_SEC: f64 = 8_000.0 / 8.0;
     if (bytes as f64) < duration * MIN_BYTES_PER_SEC {
         None
@@ -331,7 +321,6 @@ fn sanitize_content_length(reported: Option<u64>, duration_secs: Option<f64>) ->
     }
 }
 
-/// Some CDNs (YouTube included) reject the stream without these headers riding along.
 fn headers_from_json(item: &Value) -> Vec<(String, String)> {
     item.get("http_headers")
         .and_then(Value::as_object)
@@ -394,7 +383,7 @@ mod tests {
 
     #[test]
     fn resolved_info_discards_implausibly_small_filesize_for_duration() {
-        // Regression: a 3-min track reporting ~58KB implies well under 8kbps — a bad estimate.
+
         let item = serde_json::json!({
             "url": "https://example.com/stream",
             "duration": 180,

@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 
 const MAX_LINES: usize = 40;
 
-/// Recent WARN+ log lines for an owner-alert DM — reuses tracing_subscriber's formatter via MakeWriter.
 #[derive(Clone)]
 pub struct RecentLogs(Arc<Mutex<VecDeque<String>>>);
 
@@ -13,7 +12,6 @@ impl RecentLogs {
         Self(Arc::new(Mutex::new(VecDeque::with_capacity(MAX_LINES))))
     }
 
-    /// Oldest-first snapshot, one line per entry; recovers from poisoning instead of panicking.
     pub fn snapshot(&self) -> String {
         self.0
             .lock()
@@ -39,7 +37,6 @@ impl Default for RecentLogs {
     }
 }
 
-/// The actual io::Write sink handed out per-event by MakeWriter.
 pub struct RecentLogsWriter(RecentLogs);
 
 impl Write for RecentLogsWriter {

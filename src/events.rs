@@ -30,6 +30,8 @@ pub async fn handle_event(
             if let Some((_, player)) = data.players.remove(&incomplete.id) {
                 player.shutdown();
             }
+            data.vibe_history.remove(&incomplete.id);
+            data.skip_votes.remove(&incomplete.id);
         }
         _ => {}
     }
@@ -102,7 +104,6 @@ async fn handle_component_interaction(
     }
 }
 
-/// Same check `require_same_voice_channel` uses for text commands — buttons need it too.
 async fn has_np_button_permission(
     ctx: &serenity::Context,
     data: &Arc<BotData>,
@@ -169,7 +170,6 @@ async fn handle_search_pick(
     track.requester_id = user_id.get();
     let title = track.escaped_title();
 
-    // Must ack within 3s, but play() (search + voice connect) routinely takes longer.
     let _ = interaction
         .create_response(ctx, CreateInteractionResponse::Acknowledge)
         .await;
@@ -234,7 +234,7 @@ async fn handle_voice_state_update(
 
     if new.user_id == bot_id {
         let Some(new_channel) = new.channel_id else {
-            // !leave clears stay_connected first, so this correctly skips a clean leave.
+
             let Some(old_channel) = old.and_then(|o| o.channel_id) else {
                 return;
             };
@@ -256,7 +256,6 @@ async fn handle_voice_state_update(
             return;
         };
 
-        // Channel changed without disconnecting (e.g. dragged) — songbird already followed.
         if old.and_then(|o| o.channel_id) != Some(new_channel) {
             if let Some(player) = data.players.get(&guild_id).map(|p| p.clone()) {
                 player.sync_channel(new_channel);
@@ -265,7 +264,6 @@ async fn handle_voice_state_update(
         return;
     }
 
-    // Someone else's voice state changed — only relevant if it affects our channel.
     let Some(player) = data.players.get(&guild_id).map(|p| p.clone()) else {
         return;
     };
@@ -283,7 +281,6 @@ async fn handle_voice_state_update(
         return;
     }
 
-    // Excludes only our own bot from the human count, not other bots in the channel.
     let has_humans = ctx.cache.guild(guild_id).is_some_and(|g| {
         g.voice_states
             .values()

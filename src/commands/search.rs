@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 use crate::bot::Context;
 
-/// Search for a track and show the top results (use !play to queue one).
-// No "s" alias — it collides with skip's, which kept it as the more frequently used command.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn search(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {

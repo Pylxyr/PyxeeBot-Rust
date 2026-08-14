@@ -25,7 +25,7 @@ use super::snapshot::PlayerSnapshot;
 pub struct PlayOutcome {
     pub position: usize,
     pub now_playing: bool,
-    /// True if the whole queue (including what was just added) failed to resolve.
+
     pub failed: bool,
 }
 
@@ -78,15 +78,15 @@ pub enum PlayerCommand {
         to: usize,
         reply: oneshot::Sender<bool>,
     },
-    /// Reconnects without touching queue/playback state — used after a force-kick with stay_connected on.
+
     Rejoin {
         channel_id: ChannelId,
     },
-    /// Moved channels without disconnecting (e.g. dragged) — songbird already followed, this just syncs.
+
     SyncChannel(ChannelId),
-    /// Normal track end; ignored if the generation no longer matches (already superseded, e.g. a skip).
+
     TrackEnded(u64),
-    /// Same generation check as TrackEnded, but for a playback failure — logged distinctly, not requeued.
+
     TrackErrored(u64, Option<String>),
     ScheduleEmptyDisconnect,
     CancelEmptyDisconnect,
@@ -97,7 +97,7 @@ pub enum PlayerCommand {
         generation: u64,
         result: Result<crate::extraction::ResolvedInfo>,
     },
-    /// Background autoplay search result; `None` means nothing playable turned up.
+
     AutoplayReady(Option<Track>),
 }
 
@@ -111,7 +111,7 @@ struct TrackEndNotifier {
 impl SongbirdEventHandler for TrackEndNotifier {
     async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
         let cmd = if self.errored {
-            // Debug-formatted, not matched: songbird's error enums are non-exhaustive and version-specific.
+
             let reason = match ctx {
                 EventContext::Track(states) => {
                     states.first().map(|(state, _)| format!("{:?}", state.playing))
@@ -151,12 +151,12 @@ pub struct PlayerActor {
     paused_total: std::time::Duration,
     last_snapshot_hash: Option<u64>,
     retried_current_track: bool,
-    /// Dedups songbird's paired Error+End fire, since Skip clears current_handle before TrackEnded arrives.
+
     last_finished_generation: Option<u64>,
-    /// Reply for a `!play` into an empty queue, waiting on the background resolve (see handle_play).
+
     pending_play_reply: Option<(oneshot::Sender<Result<PlayOutcome>>, usize)>,
     prefetch_task: Option<AbortHandle>,
-    /// 0-200 — songbird's volume lives on the track, so it's reapplied on every track start, not set once.
+
     volume: u8,
 }
 
@@ -225,8 +225,10 @@ impl PlayerActor {
         }
     }
 
-    /// Fire-and-forget; no-ops when nothing queue-related changed since the last call.
     fn persist_queue_snapshot(&mut self) {
+        if !self.config.restore_queue_on_restart {
+            return;
+        }
         if !self.state.take_dirty() {
             return;
         }
@@ -266,7 +268,6 @@ impl PlayerActor {
         });
     }
 
-    /// `None` clears it (e.g. on `!leave`).
     fn persist_last_voice_channel(&self, channel_id: Option<ChannelId>) {
         let db = self.db.clone();
         let guild_id = self.guild_id.get();
@@ -320,14 +321,18 @@ impl PlayerActor {
             PlayerCommand::Skip => {
                 self.resolve_pending_play(false, false);
                 self.current_generation += 1;
+                let seed = self.state.current.clone();
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
-                    // Advances synchronously so loop-mode requeue doesn't fire for a manual skip.
+
                     self.advance_and_resolve_next();
                 } else if self.state.current.is_some() {
                     self.discard_current_and_advance();
                 }
                 self.is_paused = false;
+                if self.state.current.is_none() {
+                    self.maybe_autoplay(seed);
+                }
             }
             PlayerCommand::Stop => {
                 self.resolve_pending_play(false, false);
@@ -441,7 +446,7 @@ impl PlayerActor {
                     if let Some(handle) = self.current_handle.take() {
                         let _ = handle.stop();
                     }
-                    // Background resolve, like every other path — avoids blocking this guild's loop.
+
                     self.retried_current_track = false;
                     self.spawn_resolve_for_current();
                 }
@@ -533,7 +538,7 @@ impl PlayerActor {
             }
             PlayerCommand::EmptyTimeout => {
                 self.empty_timer = None;
-                // Regression fix: honour stay_connected before disconnecting on an empty channel.
+
                 if self.state.should_disconnect_when_empty() {
                     self.resolve_pending_play(false, false);
                     self.current_generation += 1;
@@ -638,7 +643,6 @@ impl PlayerActor {
         tracing::info!(guild_id = %self.guild_id, "handle_play: done");
     }
 
-    /// Connects or switches channels as needed; a no-op if already there.
     async fn ensure_connected(&mut self, channel_id: ChannelId) -> Result<()> {
         if self.call.is_some() && self.channel_id == Some(channel_id) {
             return Ok(());
@@ -659,7 +663,6 @@ impl PlayerActor {
         Ok(())
     }
 
-    /// Answers a `!play` waiting on the first track's background resolve, if one is pending.
     fn resolve_pending_play(&mut self, now_playing: bool, failed: bool) {
         if let Some((reply, position)) = self.pending_play_reply.take() {
             let _ = reply.send(Ok(PlayOutcome {
@@ -670,7 +673,6 @@ impl PlayerActor {
         }
     }
 
-    /// Shared by TrackEnded/TrackErrored; an errored track isn't requeued for loop mode.
     async fn handle_track_finished(&mut self, generation: u64, error_reason: Option<String>) {
         if generation != self.current_generation
             || self.last_finished_generation == Some(generation)
@@ -696,7 +698,6 @@ impl PlayerActor {
         self.maybe_autoplay(finished);
     }
 
-    /// Retries once with a cache-bypassing resolve; on a second failure, drops it and moves on.
     async fn handle_resolve_failure(&mut self) {
         if !self.retried_current_track {
             self.retried_current_track = true;
@@ -711,7 +712,6 @@ impl PlayerActor {
         }
     }
 
-    /// Nothing to do if something already landed in `current`; the search runs in the background.
     fn maybe_autoplay(&mut self, seed: Option<Track>) {
         if self.state.current.is_some() {
             return;
@@ -727,7 +727,6 @@ impl PlayerActor {
         }
     }
 
-    /// Runs the Last.fm + yt-dlp search off the actor task; reports back via `AutoplayReady`.
     fn spawn_autoplay_search(&mut self, seed: Track) {
         let Some(lastfm) = self.lastfm.clone() else { return };
         let extractor = self.extractor.clone();
@@ -739,7 +738,6 @@ impl PlayerActor {
         });
     }
 
-    /// Queues the found track, unless autoplay/the call ended while the search ran.
     fn handle_autoplay_ready(&mut self, track: Option<Track>) {
         if let Some(track) = track.filter(|_| self.state.autoplay && self.call.is_some()) {
             let was_idle = self.state.current.is_none();
@@ -754,7 +752,6 @@ impl PlayerActor {
         }
     }
 
-    /// Pops the next queued track and starts resolving it in the background, without waiting.
     fn advance_and_resolve_next(&mut self) {
         self.retried_current_track = false;
         if self.state.advance().is_some() {
@@ -764,7 +761,6 @@ impl PlayerActor {
         }
     }
 
-    /// Like `advance_and_resolve_next`, but for a track abandoned before it ever played.
     fn discard_current_and_advance(&mut self) {
         self.state.discard_current();
         self.retried_current_track = false;
@@ -776,13 +772,12 @@ impl PlayerActor {
         }
     }
 
-    /// Backgrounds the resolve and reports via `ResolveDone` — inline would freeze !skip/!stop.
     fn spawn_resolve_for_current(&mut self) {
         let Some(track) = self.state.current.clone() else {
             return;
         };
         self.cancel_idle_timer();
-        // Don't let a stale prefetch compete with this resolve.
+
         if let Some(handle) = self.prefetch_task.take() {
             handle.abort();
         }
@@ -791,7 +786,7 @@ impl PlayerActor {
         let extractor = self.extractor.clone();
         let self_tx = self.self_tx.clone();
         let guild_id = self.guild_id;
-        // Not "android" — it only ever gave us HLS-only formats.
+
         let client_override = self.retried_current_track.then_some("tv");
         tracing::info!(%guild_id, title = %track.title, generation, retry = self.retried_current_track, "spawn_resolve_for_current: resolving in background");
         tokio::spawn(async move {
@@ -800,7 +795,6 @@ impl PlayerActor {
         });
     }
 
-    /// Starts playback on a successful resolve, else routes into the same retry/give-up path.
     async fn handle_resolve_done(
         &mut self,
         generation: u64,
@@ -833,7 +827,6 @@ impl PlayerActor {
         self.maybe_autoplay(seed);
     }
 
-    /// Hands a resolved stream to songbird — shared by every playback-start path now.
     async fn finish_starting_track(
         &mut self,
         track: Track,
@@ -914,7 +907,6 @@ impl PlayerActor {
         Ok(())
     }
 
-    /// Sequential, not parallel — parallel extraction competes with live Opus encoding for the same core.
     fn spawn_prefetch(&mut self) {
         if let Some(handle) = self.prefetch_task.take() {
             handle.abort();
@@ -969,12 +961,10 @@ impl PlayerActor {
     }
 }
 
-/// Strips YouTube's auto-generated "Artist - Topic" channel suffix for Last.fm's lookup.
 fn clean_artist_name(uploader: &str) -> String {
     uploader.trim_end_matches(" - Topic").trim().to_owned()
 }
 
-/// Free function, not a method — lets the search run entirely off the actor task.
 async fn find_autoplay_track(
     lastfm: &LastFmClient,
     extractor: &Extractor,

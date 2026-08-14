@@ -48,7 +48,6 @@ pub struct UserStats {
     pub total_seconds: i64,
 }
 
-/// Deliberately not the full `Track` — only these four fields round-trip through storage.
 #[derive(Debug, Clone)]
 pub struct QueueEntryRef<'a> {
     pub query: &'a str,
@@ -58,7 +57,6 @@ pub struct QueueEntryRef<'a> {
 }
 
 impl Database {
-    // ── guild settings (prefix / DJ role / stay / autoplay) ─────────────────
 
     pub async fn get_prefix(&self, guild_id: u64) -> Option<String> {
         if let Some(cached) = self.prefix_cache.get(&guild_id) {
@@ -289,7 +287,6 @@ impl Database {
         Ok(())
     }
 
-    /// Guilds with a saved voice channel and a saved queue.
     pub async fn list_restorable_guilds(&self) -> sqlx::Result<Vec<(u64, u64)>> {
         let rows: Vec<(i64, i64)> = sqlx::query_as::<_, (i64, i64)>(
             "SELECT gs.guild_id, gs.last_voice_channel_id
@@ -303,8 +300,6 @@ impl Database {
         .await?;
         Ok(rows.into_iter().map(|(g, c)| (g as u64, c as u64)).collect())
     }
-
-    // ── saved playlists ──────────────────────────────────────────────────────
 
     pub async fn save_playlist(
         &self,
@@ -400,8 +395,6 @@ impl Database {
         Ok(result.rows_affected() > 0)
     }
 
-    // ── queue snapshots (restart recovery) ───────────────────────────────────
-
     fn snapshot_hash(guild_id: u64, entries: &[QueueEntryRef<'_>]) -> u64 {
         let mut hasher = DefaultHasher::new();
         guild_id.hash(&mut hasher);
@@ -483,8 +476,6 @@ impl Database {
             })
             .collect())
     }
-
-    // ── play history ─────────────────────────────────────────────────────────
 
     pub async fn add_play_history(
         &self,

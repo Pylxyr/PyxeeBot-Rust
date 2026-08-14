@@ -39,7 +39,7 @@ fn now_playing_embed_shows_playing_state() {
     assert!(json.contains("Now Playing"));
     assert!(json.contains("Song Title"));
     assert!(json.contains("<@42>"));
-    assert!(json.contains("2:05")); // 125 seconds
+    assert!(json.contains("2:05"));
 }
 
 #[test]

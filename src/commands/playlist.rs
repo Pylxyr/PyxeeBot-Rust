@@ -2,7 +2,6 @@ use crate::bot::Context;
 use crate::db::QueueEntryRef;
 use crate::models::Track;
 
-/// Manage saved playlists.
 #[poise::command(
     prefix_command,
     slash_command,
@@ -15,7 +14,6 @@ pub async fn playlist(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Save the current queue as a named playlist.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn save(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -56,7 +54,6 @@ pub async fn save(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Load a saved playlist into the queue.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn load(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -112,7 +109,6 @@ pub async fn load(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// List saved playlists for this server.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn list(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -131,7 +127,6 @@ pub async fn list(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show the tracks in a saved playlist.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn show(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -157,7 +152,6 @@ pub async fn show(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Delete a saved playlist.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn delete(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {

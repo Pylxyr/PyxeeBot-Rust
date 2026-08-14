@@ -9,13 +9,12 @@ pub struct ResolvedInfo {
     pub stream_url: String,
     pub acodec: String,
     pub abr: f64,
-    /// Extra HTTP headers yt-dlp reports are needed to fetch `stream_url`.
+
     pub headers: Vec<(String, String)>,
-    /// Byte length, needed for songbird's `HttpRequest` on CDNs that require bounded byte-ranges.
+
     pub content_length: Option<u64>,
 }
 
-/// Resolved stream URLs keyed by webpage URL; moka handles TTL eviction itself.
 pub struct ResolveCache {
     inner: Cache<String, ResolvedInfo>,
 }
@@ -42,7 +41,6 @@ impl ResolveCache {
     }
 }
 
-/// Raw search entries by normalized query — a hit with enough entries counts, fewer is a miss.
 pub struct SearchCache {
     inner: Cache<String, Vec<serde_json::Value>>,
 }

@@ -17,7 +17,7 @@ pub fn all() -> Vec<poise::Command<Arc<BotData>, Error>> {
     vec![
         misc::ping(),
         misc::lyrics(),
-        // playback
+
         playback::join(),
         playback::leave(),
         playback::play(),
@@ -31,7 +31,7 @@ pub fn all() -> Vec<poise::Command<Arc<BotData>, Error>> {
         playback::previous(),
         playback::loop_cmd(),
         playback::nowplaying(),
-        // queue
+
         queue::queue(),
         queue::clear(),
         queue::shuffle(),
@@ -41,14 +41,14 @@ pub fn all() -> Vec<poise::Command<Arc<BotData>, Error>> {
         queue::toptracks(),
         queue::toprequestors(),
         queue::mystats(),
-        // search
+
         search::search(),
-        // playlist (subcommands registered internally)
+
         playlist::playlist(),
-        // curation
+
         curation::vibe(),
         curation::autoplay(),
-        // admin
+
         admin::stay(),
         admin::setdj(),
         admin::cleardj(),

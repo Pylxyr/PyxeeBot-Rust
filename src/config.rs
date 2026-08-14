@@ -42,7 +42,6 @@ impl Config {
         let data_dir = base_dir.join("data");
         std::fs::create_dir_all(&data_dir)?;
 
-        // Default ~/.cache/yt-dlp is blocked by ProtectHome=read-only; point it here instead.
         let ytdlp_cache_dir = data_dir.join("ytdlp-cache");
         std::fs::create_dir_all(&ytdlp_cache_dir)?;
 
@@ -120,7 +119,7 @@ impl Config {
             ytdlp_socket_timeout: int_env("YTDLP_SOCKET_TIMEOUT", 15)?.max(5) as u32,
             ytdlp_prefetch_count: int_env("YTDLP_PREFETCH_COUNT", 1)?.max(0) as usize,
             ytdlp_concurrent_extracts: int_env("YTDLP_CONCURRENT_EXTRACTS", 1)?.max(1) as usize,
-            ytdlp_curation_concurrency: int_env("YTDLP_CURATION_CONCURRENCY", 3)?.clamp(1, 6)
+            ytdlp_curation_concurrency: int_env("YTDLP_CURATION_CONCURRENCY", 2)?.clamp(1, 6)
                 as usize,
             opus_bitrate_kbps: int_env("OPUS_BITRATE_KBPS", 64)?.clamp(64, 256) as u32,
             ytdlp_resolve_cache_size: int_env("YTDLP_RESOLVE_CACHE_SIZE", 128)?.max(16) as u64,

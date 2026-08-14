@@ -1,16 +1,14 @@
+use super::helpers::require_dj;
 use crate::bot::Context;
 
-/// Sliding window size for per-guild !vibe song history — see vibe_history on BotData.
 const VIBE_HISTORY_CAP: usize = 50;
-/// How many similar tracks/artists to try, searched one at a time.
+
 const VIBE_CANDIDATE_COUNT: usize = 4;
 
-/// Normalizes a query into a dedup key, so casing/spacing variants count as the same song.
 fn vibe_history_key(query: &str) -> String {
     query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
-/// Queue similar tracks by artist/song. Requires LASTFM_API_KEY.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("vb"))]
 pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -38,7 +36,6 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         .say(format!("Building a vibe around `{artist}`..."))
         .await?;
 
-    // "Artist + song" first (typed like !play), falling back to artist-level similarity.
     let mut queries: Vec<String> = Vec::new();
     if let Ok(Some((resolved_artist, resolved_track))) = lastfm.resolve_track(&artist).await {
         if let Ok(similar) = lastfm
@@ -79,7 +76,6 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         };
     }
 
-    // Prefer songs outside recent !vibe history; reuse one only if every candidate repeats.
     {
         let seen = data.vibe_history.get(&guild_id);
         let fresh: Vec<String> = queries
@@ -98,7 +94,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     let player = data.player_for(guild_id).await;
 
     let mut queued = Vec::new();
-    // Sequential search: one yt-dlp process at a time, so it never competes with a still-resolving earlier find.
+
     for query in &queries {
         let Ok(Some(track)) = data.extractor.search_top(query, author_id).await else {
             continue;
@@ -112,7 +108,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
         while history.len() > VIBE_HISTORY_CAP {
             history.pop_front();
         }
-        // Backgrounded so resolving this one doesn't delay searching for the next candidate.
+
         let player = player.clone();
         tokio::spawn(async move {
             let _ = player.play(track, false, channel_id).await;
@@ -144,12 +140,14 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     Ok(())
 }
 
-/// Toggle autoplay (queues a similar track instead of going idle).
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn autoplay(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
+    if !require_dj(ctx).await? {
+        return Ok(());
+    }
     let data = ctx.data();
     let current = data.db.get_autoplay(guild_id.get()).await;
     let new_value = !current;

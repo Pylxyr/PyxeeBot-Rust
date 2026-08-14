@@ -8,7 +8,6 @@ use crate::models::{LoopMode, Track};
 
 const MAX_HISTORY: usize = 50;
 
-/// Outcome of a permission-checked queue removal (see `remove_if_allowed`).
 #[derive(Debug)]
 pub enum RemoveOutcome {
     Removed(Track),
@@ -43,7 +42,6 @@ impl PlayerState {
         }
     }
 
-    /// Checks and clears the dirty flag — lets the caller skip snapshot work when nothing changed.
     pub fn take_dirty(&mut self) -> bool {
         std::mem::replace(&mut self.dirty, false)
     }
@@ -59,7 +57,6 @@ impl PlayerState {
             .count()
     }
 
-    /// Evicts the front at capacity — mirrors Python's `deque(maxlen=N).append`.
     pub fn push_back(&mut self, track: Track) {
         self.dirty = true;
         if self.queue.len() >= self.max_queue_size {
@@ -71,7 +68,6 @@ impl PlayerState {
         self.queue.push_back(track);
     }
 
-    /// Evicts the back at capacity — the Python version skipped this, drifting `total_duration`.
     pub fn push_front(&mut self, track: Track) {
         self.dirty = true;
         if self.queue.len() >= self.max_queue_size {
@@ -92,7 +88,6 @@ impl PlayerState {
         track
     }
 
-    /// Moves `current` into bounded history and pulls the next track off the queue.
     pub fn advance(&mut self) -> Option<Track> {
         self.dirty = true;
         if let Some(prev) = self.current.take() {
@@ -105,14 +100,12 @@ impl PlayerState {
         self.current.clone()
     }
 
-    /// Drops `current` (never played) and pulls in the next queued track, if any.
     pub fn discard_current(&mut self) -> Option<Track> {
         self.dirty = true;
         self.current = self.pop_front();
         self.current.clone()
     }
 
-    /// Requeues a just-finished track per loop mode, via push_front/push_back for correct accounting.
     pub fn requeue_finished(&mut self, track: Track) {
         match self.loop_mode {
             LoopMode::One => self.push_front(track),
@@ -121,7 +114,6 @@ impl PlayerState {
         }
     }
 
-    /// Rewinds to the last history entry; returns false if there's no history.
     pub fn play_previous(&mut self) -> bool {
         let Some(previous) = self.history.pop() else {
             return false;
@@ -156,7 +148,6 @@ impl PlayerState {
         track
     }
 
-    /// Checks ownership and removes atomically, so nothing can change in between.
     pub fn remove_if_allowed(
         &mut self,
         position: usize,
@@ -188,12 +179,10 @@ impl PlayerState {
         }
     }
 
-    /// The Python version was missing this `stay_connected` guard entirely.
     pub fn should_disconnect_when_empty(&self) -> bool {
         !self.stay_connected
     }
 
-    /// Whether an idle disconnect (nothing playing, nothing queued) should proceed.
     pub fn should_disconnect_when_idle(&self) -> bool {
         !self.stay_connected && self.current.is_none() && self.queue.is_empty()
     }

@@ -3,7 +3,6 @@ use poise::serenity_prelude::{Role, RoleId};
 use super::helpers::require_dj;
 use crate::bot::Context;
 
-/// Toggle 24/7 mode (stay connected even when the channel empties).
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn stay(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -26,7 +25,6 @@ pub async fn stay(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Set the DJ role for this server.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn setdj(ctx: Context<'_>, role: Role) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -47,7 +45,6 @@ pub async fn setdj(ctx: Context<'_>, role: Role) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Clear the DJ role for this server.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn cleardj(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -64,7 +61,6 @@ pub async fn cleardj(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show the current DJ role for this server.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn dj(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -83,7 +79,6 @@ pub async fn dj(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Change the command prefix for this server.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn setprefix(ctx: Context<'_>, prefix: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -106,7 +101,6 @@ pub async fn setprefix(ctx: Context<'_>, prefix: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show bot status and basic stats.
 #[poise::command(prefix_command, slash_command)]
 pub async fn stats(ctx: Context<'_>) -> anyhow::Result<()> {
     let guild_count = ctx.serenity_context().cache.guild_count();

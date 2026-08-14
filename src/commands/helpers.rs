@@ -1,6 +1,5 @@
 use crate::bot::Context;
 
-/// DJ = has the configured DJ role, or Manage Channels, or is a bot owner (mirrors Python's `_require_dj`).
 pub async fn is_dj(ctx: Context<'_>) -> bool {
     let Some(guild_id) = ctx.guild_id() else {
         return false;
@@ -28,7 +27,6 @@ pub async fn require_dj(ctx: Context<'_>) -> anyhow::Result<bool> {
     }
 }
 
-/// DJs and unconnected bots are exempt.
 pub async fn require_same_voice_channel(ctx: Context<'_>) -> anyhow::Result<bool> {
     if is_dj(ctx).await {
         return Ok(true);

@@ -1,6 +1,5 @@
 use crate::bot::Context;
 
-/// Check whether the bot is responsive.
 #[poise::command(prefix_command, slash_command)]
 pub async fn ping(ctx: Context<'_>) -> anyhow::Result<()> {
     let start = std::time::Instant::now();
@@ -15,7 +14,6 @@ pub async fn ping(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show lyrics for the currently playing song, or a search term.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn lyrics(ctx: Context<'_>, query: Option<String>) -> anyhow::Result<()> {
     let query = match query {

@@ -34,7 +34,7 @@ fn push_back_evicts_front_at_capacity_and_fixes_total_duration() {
     let mut state = PlayerState::new(2, false, false);
     state.push_back(track("a", 10));
     state.push_back(track("b", 20));
-    // Queue is full; pushing a third evicts "a" from the front.
+
     state.push_back(track("c", 50));
     assert_eq!(state.queue.len(), 2);
     assert_eq!(state.queue[0].title, "b");
@@ -45,7 +45,7 @@ fn push_back_evicts_front_at_capacity_and_fixes_total_duration() {
 
 #[test]
 fn push_front_evicts_back_at_capacity_and_fixes_total_duration() {
-    // Python bug class: appendleft on a full deque evicted the back without fixing total_duration.
+
     let mut state = PlayerState::new(2, false, false);
     state.push_back(track("a", 10));
     state.push_back(track("b", 20));
@@ -53,7 +53,7 @@ fn push_front_evicts_back_at_capacity_and_fixes_total_duration() {
     assert_eq!(state.queue.len(), 2);
     assert_eq!(state.queue[0].title, "prev");
     assert_eq!(state.queue[1].title, "a");
-    // "b" (duration 20) was evicted from the back.
+
     assert_eq!(state.total_duration, 60);
     assert_eq!(state.total_duration, sum_durations(&state));
 }
@@ -92,13 +92,12 @@ fn play_previous_moves_history_to_current_and_current_back_to_queue() {
 
 #[test]
 fn play_previous_respects_capacity_eviction() {
-    // Full queue: requeuing the old "current" must evict the back like any other push_front.
+
     let mut state = PlayerState::new(2, false, false);
     state.history.push(track("prev", 50));
     state.current = Some(track("current", 30));
     state.push_back(track("a", 10));
     state.push_back(track("b", 20));
-    // queue is now [a, b], full at capacity 2.
 
     assert!(state.play_previous());
     assert_eq!(state.current.as_ref().unwrap().title, "prev");

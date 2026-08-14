@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// A queued track, immutable — resolved-stream state lives separately in `extraction::ResolvedInfo`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Track {
     pub title: String,
@@ -32,7 +31,6 @@ impl Track {
         }
     }
 
-    /// "m:ss" or "h:mm:ss" — matches Python's Track.duration_label.
     pub fn duration_label(&self) -> String {
         let total = self.duration.max(0);
         let (hours, rem) = (total / 3600, total % 3600);
@@ -45,7 +43,6 @@ impl Track {
     }
 }
 
-/// Mirrors discord.utils.escape_markdown for characters bot-owned strings can contain.
 pub fn escape_markdown(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {

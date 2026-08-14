@@ -8,7 +8,6 @@ pub struct LastFmClient {
     http_client: reqwest::Client,
 }
 
-// Last.fm signals API errors with a 200 OK + error-shaped body, not an HTTP error status.
 #[derive(Debug, Deserialize)]
 struct LastFmErrorResponse {
     message: String,
@@ -82,7 +81,6 @@ impl LastFmClient {
         }
     }
 
-    /// Distinguishes Last.fm's error-shaped body from a genuine decode failure.
     async fn get<T: serde::de::DeserializeOwned>(
         &self,
         params: &[(&str, &str)],
@@ -108,7 +106,6 @@ impl LastFmClient {
             .map_err(|e| anyhow::anyhow!("unexpected response format ({e})"))
     }
 
-    /// Returns similar artist names for a seed artist, most similar first.
     pub async fn similar_artists(&self, artist: &str, limit: usize) -> anyhow::Result<Vec<String>> {
         let limit_str = limit.to_string();
         let response: SimilarArtistsResponse = self
@@ -127,7 +124,6 @@ impl LastFmClient {
             .collect())
     }
 
-    /// Resolves free text (e.g. "zutomayo saturn") to the best-matching (artist, track) pair.
     pub async fn resolve_track(&self, query: &str) -> anyhow::Result<Option<(String, String)>> {
         let response: TrackSearchResponse = self
             .get(&[
@@ -145,7 +141,6 @@ impl LastFmClient {
             .map(|t| (t.artist, t.name)))
     }
 
-    /// Similar (artist, track) pairs for a seed track, most similar first.
     pub async fn similar_tracks(
         &self,
         artist: &str,

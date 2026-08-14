@@ -2,7 +2,6 @@ use super::helpers::require_dj;
 use crate::bot::Context;
 use crate::player::RemoveOutcome;
 
-/// Show the current queue.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("q"))]
 pub async fn queue(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -40,7 +39,6 @@ pub async fn queue(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Clear the queue (keeps the current track playing).
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn clear(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -55,7 +53,6 @@ pub async fn clear(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Shuffle the queue.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn shuffle(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -69,7 +66,6 @@ pub async fn shuffle(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Move a track from one position to another (1-indexed).
 #[poise::command(prefix_command, slash_command, guild_only, rename = "move")]
 pub async fn move_track_cmd(ctx: Context<'_>, from: usize, to: usize) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -98,7 +94,6 @@ pub async fn move_track_cmd(ctx: Context<'_>, from: usize, to: usize) -> anyhow:
     Ok(())
 }
 
-/// Remove a track from the queue by position (1-indexed).
 #[poise::command(prefix_command, slash_command, guild_only, aliases("rm"))]
 pub async fn remove(ctx: Context<'_>, position: usize) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -130,7 +125,6 @@ pub async fn remove(ctx: Context<'_>, position: usize) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show recently played tracks (this session only).
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn history(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -153,7 +147,6 @@ pub async fn history(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show the most-played tracks for this server, all-time.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn toptracks(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -180,7 +173,6 @@ pub async fn toptracks(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show the top track requestors for this server, all-time.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn toprequestors(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -207,7 +199,6 @@ pub async fn toprequestors(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show a user's listening stats in this server (defaults to yourself).
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn mystats(
     ctx: Context<'_>,

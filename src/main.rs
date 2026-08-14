@@ -1,7 +1,7 @@
 use pyxeebot::{bot, config::Config, db::Database};
 use tracing::info;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 

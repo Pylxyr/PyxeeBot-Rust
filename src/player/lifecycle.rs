@@ -6,7 +6,6 @@ use tokio::sync::Mutex;
 
 use crate::errors::{BotError, Result};
 
-/// Joins/switches channels — songbird's manager reuses or creates the `Call` as needed.
 pub async fn connect(
     songbird: &Songbird,
     guild_id: GuildId,
@@ -19,7 +18,7 @@ pub async fn connect(
         .join(guild_id, channel_id)
         .await
         .map_err(|e| BotError::Voice(e.to_string()));
-    // applied on every (re)connect — songbird resets driver config per-Call
+
     if let Ok(call) = &result {
         call.lock()
             .await
@@ -38,7 +37,6 @@ pub async fn connect(
     result
 }
 
-/// `Ok(false)` means nothing was connected — that already satisfies the caller's goal, not an error.
 pub async fn disconnect(songbird: &Songbird, guild_id: GuildId) -> Result<bool> {
     if songbird.get(guild_id).is_none() {
         tracing::info!(guild_id = %guild_id, "lifecycle::disconnect: nothing to leave");

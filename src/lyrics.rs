@@ -34,7 +34,6 @@ impl LyricsClient {
         Self { http_client }
     }
 
-    // Uses lyrics.ovh's suggest endpoint rather than guessing by splitting a YouTube title.
     async fn suggest(&self, query: &str) -> anyhow::Result<Option<(String, String)>> {
         let url = format!("{API_BASE}/suggest/{}", encode_path_segment(query));
         let response: SuggestResponse = self
@@ -66,7 +65,6 @@ impl LyricsClient {
         Ok(body.lyrics)
     }
 
-    /// `Ok(None)` means nothing found (normal); `Err` means the API call itself failed.
     pub async fn get_lyrics(
         &self,
         query: &str,

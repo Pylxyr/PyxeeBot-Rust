@@ -18,7 +18,6 @@ fn voice_channel_of(
         .and_then(|vs| vs.channel_id)
 }
 
-/// True only for `list=` without `v=` — not a video URL that incidentally carries `list=`.
 fn is_playlist_url(url: &str) -> bool {
     let lower = url.to_lowercase();
     lower.contains("list=") && !lower.contains("v=")
@@ -67,7 +66,6 @@ async fn play_playlist(
         )
         .await;
 
-    // Reversed for !playnext — pushing to the front one at a time would reverse the order.
     let ordered: Vec<_> = if front {
         tracks.into_iter().rev().collect()
     } else {
@@ -101,7 +99,6 @@ async fn play_playlist(
     Ok(())
 }
 
-/// Join your current voice channel.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn join(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -119,7 +116,6 @@ pub async fn join(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Aborts any live !nowplaying refresher and clears vote-skip tallies — shared by !stop and !leave.
 fn clear_guild_side_state(data: &crate::bot::BotData, guild_id: poise::serenity_prelude::GuildId) {
     if let Some((_, handle)) = data.np_refreshers.remove(&guild_id) {
         handle.abort();
@@ -127,7 +123,6 @@ fn clear_guild_side_state(data: &crate::bot::BotData, guild_id: poise::serenity_
     data.skip_votes.remove(&guild_id);
 }
 
-/// Leave the voice channel and clear the queue. Also turns off 24/7 mode
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -155,13 +150,11 @@ pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Search and play (or queue) a track.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("p"))]
 pub async fn play(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     play_or_queue(ctx, query, false).await
 }
 
-/// Queue a track at the front of the queue.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("pn"))]
 pub async fn playnext(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     play_or_queue(ctx, query, true).await
@@ -200,7 +193,7 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
             data.extractor.search_top(&query, author_id.get()).await
         }
     };
-    // Overlap the reply with the search instead of doing them in series.
+
     let (handle, resolve_result) = tokio::join!(say_fut, resolve_fut);
     let handle = handle?;
     let track = match resolve_result {
@@ -288,7 +281,6 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
     Ok(())
 }
 
-/// Skip the current track. DJs only — use `!voteskip` otherwise.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("s"))]
 pub async fn skip(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -302,7 +294,6 @@ pub async fn skip(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Vote to skip the current track. DJs skip immediately without a vote.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("vsk"))]
 pub async fn voteskip(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -370,7 +361,6 @@ pub async fn voteskip(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Stop playback and clear the queue.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn stop(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -385,7 +375,6 @@ pub async fn stop(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Pause the current track.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn pause(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -399,7 +388,6 @@ pub async fn pause(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resume the current track.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn resume(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -413,7 +401,6 @@ pub async fn resume(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show or set the playback volume (0-200).
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn volume(ctx: Context<'_>, level: Option<u8>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -434,7 +421,6 @@ pub async fn volume(ctx: Context<'_>, level: Option<u8>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Go back to the previous track.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("prev"))]
 pub async fn previous(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -452,7 +438,6 @@ pub async fn previous(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Cycle loop mode: off -> single track -> entire queue -> off.
 #[poise::command(
     prefix_command,
     slash_command,
@@ -477,7 +462,6 @@ pub async fn loop_cmd(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show what's currently playing.
 #[poise::command(prefix_command, slash_command, guild_only, aliases("np"))]
 pub async fn nowplaying(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -504,7 +488,7 @@ pub async fn nowplaying(ctx: Context<'_>) -> anyhow::Result<()> {
                 player,
                 interval_secs,
             ));
-            // Replace, don't stack: an earlier refresher for this guild would otherwise leak.
+
             if let Some(old) = ctx.data().np_refreshers.insert(guild_id, task.abort_handle()) {
                 old.abort();
             }
@@ -513,7 +497,6 @@ pub async fn nowplaying(ctx: Context<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Detached loop for NP_AUTO_REFRESH — stops when nothing's playing, an edit fails, or the cap hits.
 async fn refresh_now_playing(
     http: Arc<Http>,
     channel_id: ChannelId,
@@ -524,7 +507,7 @@ async fn refresh_now_playing(
     const MAX_REFRESH_SECS: u64 = 2 * 60 * 60;
     let interval_secs = interval_secs.max(1);
     let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
-    ticker.tick().await; // first tick fires immediately; the sent message is already fresh
+    ticker.tick().await;
 
     let mut elapsed = 0u64;
     loop {

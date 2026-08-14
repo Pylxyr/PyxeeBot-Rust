@@ -22,7 +22,6 @@ use crate::models::{LoopMode, Track};
 
 use actor::{PlayerActor, PlayerCommand};
 
-/// Cheap-to-clone handle to a guild's player actor; state lives entirely in the spawned task.
 pub struct GuildPlayer {
     tx: tokio::sync::mpsc::UnboundedSender<PlayerCommand>,
     snapshot_rx: watch::Receiver<PlayerSnapshot>,
@@ -108,7 +107,6 @@ impl GuildPlayer {
         let _ = rx.await;
     }
 
-    /// `Ok(true)` if a call was actually left; `Ok(false)` just means it wasn't connected.
     pub async fn leave(&self) -> Result<bool> {
         let (reply, rx) = oneshot::channel();
         self.send(PlayerCommand::Leave { reply });
@@ -187,7 +185,6 @@ impl GuildPlayer {
         self.send(PlayerCommand::Rejoin { channel_id });
     }
 
-    /// Voice channel changed without a Connect/Rejoin (e.g. dragged by a mod).
     pub fn sync_channel(&self, channel_id: ChannelId) {
         self.send(PlayerCommand::SyncChannel(channel_id));
     }

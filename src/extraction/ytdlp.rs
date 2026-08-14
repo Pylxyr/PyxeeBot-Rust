@@ -10,10 +10,8 @@ use crate::config::Config;
 use crate::constants::{YTDLP_FORMAT, YTDLP_RETRY_FORMAT};
 use crate::errors::{BotError, Result};
 
-/// Caps a single yt-dlp invocation's stdout/stderr so a runaway process can't exhaust RAM.
 const MAX_YTDLP_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
-/// Reads up to the cap, then keeps draining (discarding) so the child never blocks on a full pipe.
 async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> String {
     let mut buf = Vec::with_capacity(64 * 1024);
     let mut chunk = [0u8; 8192];
@@ -30,7 +28,6 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-/// Pure function (testable without spawning); `client_override` retries with a different player client.
 pub fn extract_args(
     config: &Config,
     query_or_url: &str,
@@ -77,13 +74,11 @@ pub fn extract_args(
     args
 }
 
-/// `--flat-playlist`: ranking only needs the inline metadata, not full per-video extraction.
 pub fn search_args(config: &Config, query: &str, count: usize) -> Vec<String> {
     let search_target = format!("ytsearch{count}:{query}");
     extract_args(config, &search_target, true, None)
 }
 
-/// Lists up to `limit` entries of a playlist URL; `--playlist-end` caps yt-dlp's own work.
 pub fn extract_playlist_args(config: &Config, playlist_url: &str, limit: usize) -> Vec<String> {
     let mut args = vec![
         "--dump-json".to_owned(),
@@ -108,7 +103,6 @@ pub fn extract_playlist_args(config: &Config, playlist_url: &str, limit: usize) 
     args
 }
 
-/// Parses each stdout line as JSON — yt-dlp emits one line per result for search/playlist targets.
 pub async fn run_ytdlp(config: &Config, args: &[String]) -> Result<Vec<Value>> {
     tracing::info!(cmd = %format!("yt-dlp {}", args.join(" ")), "run_ytdlp: spawning");
     let start = std::time::Instant::now();

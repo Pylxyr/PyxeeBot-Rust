@@ -27,19 +27,19 @@ pub struct BotData {
     pub lyrics: crate::lyrics::LyricsClient,
     pub http_client: reqwest::Client,
     pub players: DashMap<serenity::GuildId, Arc<GuildPlayer>>,
-    /// Last `!search` results per guild, so a select-menu/page click can look one up.
+
     pub recent_searches: Cache<serenity::GuildId, Arc<Vec<Track>>>,
-    /// Recently `!vibe`-queued song keys per guild — lets vibe favour songs it hasn't just played.
+
     pub vibe_history: DashMap<serenity::GuildId, std::collections::VecDeque<String>>,
-    /// Vote-skip tallies per guild — lives here since the actor has no Discord cache access to count listeners.
+
     pub skip_votes: DashMap<serenity::GuildId, (String, HashSet<u64>)>,
-    /// One live `!nowplaying` auto-refresher per guild — a new one aborts whatever was running.
+
     pub np_refreshers: DashMap<serenity::GuildId, tokio::task::AbortHandle>,
     pub recent_logs: crate::logbuf::RecentLogs,
 }
 
 impl BotData {
-    /// Returns the guild's player, spawning one (with persisted settings) if it doesn't exist yet.
+
     pub async fn player_for(&self, guild_id: serenity::GuildId) -> Arc<GuildPlayer> {
         if let Some(existing) = self.players.get(&guild_id) {
             return existing.clone();
@@ -72,7 +72,6 @@ pub type Context<'a> = poise::Context<'a, Arc<BotData>, anyhow::Error>;
 pub fn setup_logging(config: &Config) -> anyhow::Result<crate::logbuf::RecentLogs> {
     use tracing_subscriber::prelude::*;
 
-    // LOG_LEVEL sets the baseline; pyxeebot/songbird/symphonia stay at least "debug" regardless.
     let base = if config.log_level.trim().is_empty() {
         "info"
     } else {
@@ -83,10 +82,9 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<crate::logbuf::RecentLog
     let fallback = "info,pyxeebot=debug,songbird=debug,symphonia_core=debug,symphonia=debug";
     let filter = EnvFilter::try_new(&directive_str).or_else(|_| EnvFilter::try_new(fallback))?;
 
-    // Always emit to stdout too (journalctl-visible under systemd); LOG_TO_FILE just adds a second sink.
     let stdout_layer = fmt::layer().with_ansi(false);
     let recent_logs = crate::logbuf::RecentLogs::new();
-    // WARN+ only — the ring buffer is small and meant for "what broke", not routine INFO noise.
+
     let recent_logs_layer = fmt::layer()
         .with_writer(recent_logs.clone())
         .with_ansi(false)
@@ -99,7 +97,7 @@ pub fn setup_logging(config: &Config) -> anyhow::Result<crate::logbuf::RecentLog
     if config.log_to_file {
         let appender = tracing_appender::rolling::never(&config.log_dir, "musicbot.log");
         let (writer, guard) = tracing_appender::non_blocking(appender);
-        // No natural owner for this guard, so it's intentionally leaked once at startup.
+
         Box::leak(Box::new(guard));
         let file_layer = fmt::layer().with_writer(writer).with_ansi(false);
         registry.with(file_layer).init();
@@ -161,9 +159,9 @@ pub async fn run(config: Config, db: Database, recent_logs: crate::logbuf::Recen
                     .await
                     .expect("songbird manager not registered");
                 let extractor = Arc::new(Extractor::new(setup_config.clone()));
-                // Deliberately timeout-free: songbird uses this for the long-lived audio download.
+
                 let http_client = reqwest::Client::new();
-                // Timeout-bounded client for Last.fm/lyrics calls, so a slow response can't hang indefinitely.
+
                 let api_http_client = reqwest::Client::builder()
                     .timeout(Duration::from_secs(10))
                     .build()?;
@@ -228,7 +226,6 @@ pub async fn run(config: Config, db: Database, recent_logs: crate::logbuf::Recen
     client.start().await.map_err(Into::into)
 }
 
-/// Reconnects and replays each guild's saved queue on startup.
 async fn restore_queues(data: Arc<BotData>) {
     let guilds = match data.db.list_restorable_guilds().await {
         Ok(g) => g,
@@ -271,7 +268,6 @@ async fn restore_queues(data: Arc<BotData>) {
     }
 }
 
-/// Polls the extractor's failure streak and DMs bot owners once it crosses the threshold.
 async fn watch_failures(data: Arc<BotData>, http: Arc<serenity::Http>) {
     const CHECK_INTERVAL: Duration = Duration::from_secs(60);
     const FAILURE_THRESHOLD: u32 = 5;
@@ -304,11 +300,10 @@ async fn watch_failures(data: Arc<BotData>, http: Arc<serenity::Http>) {
     }
 }
 
-/// Shared by both failure-streak alerts — appends a recent-log excerpt, truncated to fit a DM.
 async fn alert_owners(data: &BotData, http: &serenity::Http, header: &str) {
     tracing::warn!(header, "watch_failures: alerting owners");
     let logs = data.recent_logs.snapshot();
-    // Leaves headroom under Discord's 2000-char message limit for the header/fences/footer.
+
     const LOG_BUDGET: usize = 1500;
     let logs = if logs.len() > LOG_BUDGET {
         let cutoff = logs.len() - LOG_BUDGET;
@@ -331,7 +326,6 @@ async fn alert_owners(data: &BotData, http: &serenity::Http, header: &str) {
     }
 }
 
-/// PASSIVE checkpoint no-ops while a reader is open; this backstops it with a timed TRUNCATE.
 async fn checkpoint_wal_periodically(db: Arc<Database>) {
     const INTERVAL: Duration = Duration::from_secs(20 * 60);
     loop {
@@ -351,7 +345,7 @@ async fn on_error(error: poise::FrameworkError<'_, Arc<BotData>, anyhow::Error>)
             tracing::warn!(command = %ctx.command().name, ?error, "command error");
             if ctx.data().config.error_announce {
                 let reply = poise::CreateReply::default()
-                    .content(format!("Error: {error}"))
+                    .content("That command hit an error. It's been logged.")
                     .ephemeral(true);
                 let _ = ctx.send(reply).await;
             }

@@ -58,7 +58,7 @@ fn extract_args_flat_playlist_adds_flag() {
 
 #[test]
 fn extract_args_always_sets_cache_dir() {
-    // Default cache dir is blocked by ProtectHome=read-only; must use config.ytdlp_cache_dir instead.
+
     let config = test_config();
     let args = extract_args(&config, "https://example.com/video", false, None);
     let idx = args.iter().position(|a| a == "--cache-dir").unwrap();
@@ -75,7 +75,7 @@ fn extract_args_uses_default_format_without_client_override() {
 
 #[test]
 fn extract_args_relaxes_format_with_client_override() {
-    // Regression: a client-override retry needs a relaxed, client-agnostic format fallback.
+
     let config = test_config();
     let args = extract_args(
         &config,
@@ -97,7 +97,7 @@ fn search_args_builds_ytsearch_target() {
 
 #[test]
 fn search_args_uses_flat_playlist() {
-    // Search only needs listing metadata; full extraction is deferred to resolve_stream().
+
     let config = test_config();
     let args = search_args(&config, "some query", 5);
     assert!(args.contains(&"--flat-playlist".to_owned()));
