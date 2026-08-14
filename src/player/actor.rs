@@ -319,11 +319,12 @@ impl PlayerActor {
             }
             PlayerCommand::Skip => {
                 self.resolve_pending_play(false, false);
+                self.current_generation += 1;
                 if let Some(handle) = self.current_handle.take() {
                     let _ = handle.stop();
+                    // Advances synchronously so loop-mode requeue doesn't fire for a manual skip.
+                    self.advance_and_resolve_next();
                 } else if self.state.current.is_some() {
-                    // Still resolving, no songbird handle yet — invalidate and advance ourselves.
-                    self.current_generation += 1;
                     self.discard_current_and_advance();
                 }
                 self.is_paused = false;
