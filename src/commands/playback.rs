@@ -127,7 +127,9 @@ fn clear_guild_side_state(data: &crate::bot::BotData, guild_id: poise::serenity_
     data.skip_votes.remove(&guild_id);
 }
 
-/// Leave the voice channel and clear the queue.
+/// Leave the voice channel and clear the queue. Also turns off 24/7 mode — otherwise the
+/// bot auto-rejoins a few seconds later, since a clean leave looks identical to a dropped
+/// connection from stay_connected's perspective.
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
@@ -136,9 +138,17 @@ pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
     if !super::helpers::require_same_voice_channel(ctx).await? {
         return Ok(());
     }
-    let player = ctx.data().player_for(guild_id).await;
+    let data = ctx.data();
+    let player = data.player_for(guild_id).await;
     let result = player.leave().await;
-    clear_guild_side_state(ctx.data(), guild_id);
+    if data.db.get_stay_connected(guild_id.get()).await {
+        let _ = data
+            .db
+            .set_stay_connected(guild_id.get(), false, &data.config.default_prefix)
+            .await;
+        player.set_stay_connected(false);
+    }
+    clear_guild_side_state(data, guild_id);
     match result {
         Ok(true) => ctx.say("Left the voice channel.").await?,
         Ok(false) => ctx.say("Not currently in a voice channel.").await?,

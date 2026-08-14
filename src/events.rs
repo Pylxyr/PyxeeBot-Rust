@@ -234,7 +234,7 @@ async fn handle_voice_state_update(
 
     if new.user_id == bot_id {
         let Some(new_channel) = new.channel_id else {
-            // Only rejoin if stay_connected is on — a clean !leave fires this too.
+            // !leave clears stay_connected first, so this correctly skips a clean leave.
             let Some(old_channel) = old.and_then(|o| o.channel_id) else {
                 return;
             };
