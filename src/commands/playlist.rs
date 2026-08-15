@@ -97,7 +97,7 @@ pub async fn load(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
             abr: 0.0,
         };
         if player
-            .play(track, false, channel_id)
+            .play(track, false, channel_id, ctx.channel_id())
             .await
             .is_ok_and(|o| !o.failed)
         {

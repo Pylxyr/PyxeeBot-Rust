@@ -175,7 +175,10 @@ async fn handle_search_pick(
         .await;
 
     let player = data.player_for(guild_id).await;
-    let content = match player.play(track, false, channel_id).await {
+    let content = match player
+        .play(track, false, channel_id, interaction.channel_id)
+        .await
+    {
         Ok(outcome) if outcome.failed => {
             format!("Couldn't play **{title}** — check the bot logs for details.")
         }

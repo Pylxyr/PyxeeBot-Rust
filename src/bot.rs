@@ -26,6 +26,7 @@ pub struct BotData {
     pub lastfm: Option<LastFmClient>,
     pub lyrics: crate::lyrics::LyricsClient,
     pub http_client: reqwest::Client,
+    pub http: Arc<serenity::Http>,
     pub players: DashMap<serenity::GuildId, Arc<GuildPlayer>>,
 
     pub recent_searches: Cache<serenity::GuildId, Arc<Vec<Track>>>,
@@ -55,6 +56,7 @@ impl BotData {
                     self.songbird.clone(),
                     self.extractor.clone(),
                     self.http_client.clone(),
+                    self.http.clone(),
                     self.lastfm.clone(),
                     self.config.clone(),
                     self.db.clone(),
@@ -179,6 +181,7 @@ pub async fn run(config: Config, db: Database, recent_logs: crate::logbuf::Recen
                     lastfm,
                     lyrics,
                     http_client,
+                    http: ctx.http.clone(),
                     players: DashMap::new(),
                     recent_searches: Cache::builder()
                         .max_capacity(200)
@@ -260,7 +263,7 @@ async fn restore_queues(data: Arc<BotData>) {
 
         let track_count = tracks.len();
         for track in tracks {
-            if let Err(e) = player.play(track, false, channel_id).await {
+            if let Err(e) = player.play(track, false, channel_id, channel_id).await {
                 tracing::warn!(%guild_id, error = %e, "restore_queues: failed to re-queue a track");
             }
         }

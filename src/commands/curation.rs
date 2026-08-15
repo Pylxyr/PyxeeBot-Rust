@@ -92,6 +92,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
     }
 
     let player = data.player_for(guild_id).await;
+    let text_channel_id = ctx.channel_id();
 
     let mut queued = Vec::new();
 
@@ -111,7 +112,7 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
 
         let player = player.clone();
         tokio::spawn(async move {
-            let _ = player.play(track, false, channel_id).await;
+            let _ = player.play(track, false, channel_id, text_channel_id).await;
         });
     }
 

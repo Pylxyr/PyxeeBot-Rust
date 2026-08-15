@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 
-use poise::serenity_prelude::{ChannelId, GuildId};
+use poise::serenity_prelude::{ChannelId, CreateMessage, GuildId, Http};
 use songbird::events::{Event, EventContext, EventHandler as SongbirdEventHandler, TrackEvent};
 use songbird::input::{HttpRequest, Input};
 use songbird::tracks::TrackHandle;
@@ -34,6 +34,7 @@ pub enum PlayerCommand {
         track: Track,
         front: bool,
         channel_id: ChannelId,
+        text_channel_id: ChannelId,
         reply: oneshot::Sender<Result<PlayOutcome>>,
     },
     Skip,
@@ -132,12 +133,14 @@ pub struct PlayerActor {
     songbird: Arc<Songbird>,
     extractor: Arc<Extractor>,
     http_client: reqwest::Client,
+    http: Arc<Http>,
     lastfm: Option<LastFmClient>,
     config: Arc<Config>,
     db: Arc<Database>,
     state: PlayerState,
     call: Option<Arc<AsyncMutex<Call>>>,
     channel_id: Option<ChannelId>,
+    announce_channel_id: Option<ChannelId>,
     current_handle: Option<TrackHandle>,
     current_generation: u64,
     rx: mpsc::UnboundedReceiver<PlayerCommand>,
@@ -167,6 +170,7 @@ impl PlayerActor {
         songbird: Arc<Songbird>,
         extractor: Arc<Extractor>,
         http_client: reqwest::Client,
+        http: Arc<Http>,
         lastfm: Option<LastFmClient>,
         config: Arc<Config>,
         db: Arc<Database>,
@@ -185,12 +189,14 @@ impl PlayerActor {
             songbird,
             extractor,
             http_client,
+            http,
             lastfm,
             config,
             db,
             state: PlayerState::new(max_queue_size, stay_connected, autoplay),
             call: None,
             channel_id: None,
+            announce_channel_id: None,
             current_handle: None,
             current_generation: 0,
             rx,
@@ -314,9 +320,11 @@ impl PlayerActor {
                 track,
                 front,
                 channel_id,
+                text_channel_id,
                 reply,
             } => {
-                self.handle_play(track, front, channel_id, reply).await;
+                self.handle_play(track, front, channel_id, text_channel_id, reply)
+                    .await;
             }
             PlayerCommand::Skip => {
                 self.resolve_pending_play(false, false);
@@ -576,9 +584,11 @@ impl PlayerActor {
         track: Track,
         front: bool,
         channel_id: ChannelId,
+        text_channel_id: ChannelId,
         reply: oneshot::Sender<Result<PlayOutcome>>,
     ) {
         tracing::info!(guild_id = %self.guild_id, title = %track.title, front, "handle_play: received");
+        self.announce_channel_id = Some(text_channel_id);
 
         if self.state.is_full() {
             tracing::warn!(guild_id = %self.guild_id, "handle_play: queue is full");
@@ -741,6 +751,9 @@ impl PlayerActor {
     fn handle_autoplay_ready(&mut self, track: Option<Track>) {
         if let Some(track) = track.filter(|_| self.state.autoplay && self.call.is_some()) {
             let was_idle = self.state.current.is_none();
+            if was_idle {
+                self.announce_autoplay(&track);
+            }
             self.state.push_back(track);
             if was_idle {
                 self.advance_and_resolve_next();
@@ -750,6 +763,21 @@ impl PlayerActor {
         if self.state.current.is_none() && self.state.should_disconnect_when_idle() {
             self.arm_idle_timer();
         }
+    }
+
+    fn announce_autoplay(&self, track: &Track) {
+        let Some(channel_id) = self.announce_channel_id else {
+            return;
+        };
+        let http = self.http.clone();
+        let title = track.escaped_title();
+        let guild_id = self.guild_id.get();
+        tokio::spawn(async move {
+            let builder = CreateMessage::new().content(format!("Autoplay added: **{title}**"));
+            if let Err(e) = channel_id.send_message(&http, builder).await {
+                tracing::warn!(guild_id = guild_id, error = %e, "failed to send autoplay announcement");
+            }
+        });
     }
 
     fn advance_and_resolve_next(&mut self) {

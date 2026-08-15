@@ -76,7 +76,7 @@ async fn play_playlist(
     let mut queued = 0usize;
     let mut stopped_early = false;
     for track in ordered {
-        match player.play(track, front, channel_id).await {
+        match player.play(track, front, channel_id, ctx.channel_id()).await {
             Ok(outcome) => {
                 if !outcome.failed {
                     queued += 1;
@@ -236,7 +236,10 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
         format!("Found **{title}**, loading...")
     };
     let found_edit_fut = handle.edit(ctx, poise::CreateReply::default().content(status));
-    let (_, result) = tokio::join!(found_edit_fut, player.play(track, front, channel_id));
+    let (_, result) = tokio::join!(
+        found_edit_fut,
+        player.play(track, front, channel_id, ctx.channel_id())
+    );
     tracing::info!(guild_id = %guild_id, elapsed = ?play_start.elapsed(), ok = result.is_ok(), "!play: player.play returned");
 
     match result {

@@ -5,7 +5,7 @@ mod snapshot;
 
 use std::sync::Arc;
 
-use poise::serenity_prelude::{ChannelId, GuildId};
+use poise::serenity_prelude::{ChannelId, GuildId, Http};
 use songbird::Songbird;
 use tokio::sync::{oneshot, watch};
 
@@ -34,6 +34,7 @@ impl GuildPlayer {
         songbird: Arc<Songbird>,
         extractor: Arc<Extractor>,
         http_client: reqwest::Client,
+        http: Arc<Http>,
         lastfm: Option<LastFmClient>,
         config: Arc<Config>,
         db: Arc<Database>,
@@ -46,6 +47,7 @@ impl GuildPlayer {
             songbird,
             extractor,
             http_client,
+            http,
             lastfm,
             config,
             db,
@@ -69,12 +71,14 @@ impl GuildPlayer {
         track: Track,
         front: bool,
         channel_id: ChannelId,
+        text_channel_id: ChannelId,
     ) -> Result<PlayOutcome> {
         let (reply, rx) = oneshot::channel();
         self.send(PlayerCommand::Play {
             track,
             front,
             channel_id,
+            text_channel_id,
             reply,
         });
         rx.await
