@@ -81,7 +81,7 @@ impl Extractor {
     }
 
     pub async fn search_top(&self, query: &str, requester_id: u64) -> Result<Option<Track>> {
-        let entries = self.search_entries(query, 1).await?;
+        let entries = self.search_entries(query, 3).await?;
         let Some(item) = entries.first() else {
             return Ok(None);
         };
@@ -97,6 +97,7 @@ impl Extractor {
         }
         let args = ytdlp::search_args(&self.config, query, count);
         let entries = self.run_search(&args).await?;
+        let entries: Vec<Value> = entries.into_iter().filter(is_playable_video).collect();
         self.search_cache.insert(key, entries.clone()).await;
         Ok(entries)
     }
@@ -249,6 +250,24 @@ fn value_str<'a>(item: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
+}
+
+fn is_playable_video(item: &Value) -> bool {
+    let has_duration = item
+        .get("duration")
+        .and_then(Value::as_f64)
+        .is_some_and(|d| d > 0.0);
+    if !has_duration {
+        return false;
+    }
+    let url = value_str(item, "webpage_url")
+        .or_else(|| value_str(item, "url"))
+        .unwrap_or("");
+    !url.contains("/channel/")
+        && !url.contains("/c/")
+        && !url.contains("/@")
+        && !url.contains("/user/")
+        && !url.contains("/playlist")
 }
 
 fn track_from_json(item: &Value, requester_id: u64, query: &str) -> Track {
