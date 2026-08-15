@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use pyxeebot::components::now_playing_embed;
 use pyxeebot::models::{LoopMode, Track};
 use pyxeebot::player::PlayerSnapshot;
@@ -30,7 +32,7 @@ fn now_playing_embed_shows_nothing_playing_when_empty() {
 #[test]
 fn now_playing_embed_shows_playing_state() {
     let snapshot = PlayerSnapshot {
-        current: Some(track("Song Title", 42)),
+        current: Some(Arc::new(track("Song Title", 42))),
         is_paused: false,
         loop_mode: LoopMode::Off,
         ..Default::default()
@@ -45,7 +47,7 @@ fn now_playing_embed_shows_playing_state() {
 #[test]
 fn now_playing_embed_shows_paused_state() {
     let snapshot = PlayerSnapshot {
-        current: Some(track("Song Title", 1)),
+        current: Some(Arc::new(track("Song Title", 1))),
         is_paused: true,
         ..Default::default()
     };
@@ -57,7 +59,7 @@ fn now_playing_embed_shows_paused_state() {
 #[test]
 fn now_playing_embed_shows_loop_mode() {
     let snapshot = PlayerSnapshot {
-        current: Some(track("Song Title", 1)),
+        current: Some(Arc::new(track("Song Title", 1))),
         loop_mode: LoopMode::All,
         ..Default::default()
     };
@@ -67,8 +69,8 @@ fn now_playing_embed_shows_loop_mode() {
 #[test]
 fn now_playing_embed_shows_up_next() {
     let snapshot = PlayerSnapshot {
-        current: Some(track("Song Title", 1)),
-        queue: vec![track("Next Song", 2), track("Third Song", 3)],
+        current: Some(Arc::new(track("Song Title", 1))),
+        queue: vec![Arc::new(track("Next Song", 2)), Arc::new(track("Third Song", 3))],
         ..Default::default()
     };
     let json = embed_json(&snapshot);

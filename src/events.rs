@@ -69,19 +69,20 @@ async fn handle_component_interaction(
                     .await;
                 return;
             }
+            // `_ => return` instead of `unreachable!()`: this list only stays in sync
+            // with the outer match's arm by convention, not by the compiler, so a
+            // future button id added there without a matching case here should be a
+            // silent no-op, not a panic in the gateway event handler.
             match custom_id {
-                components::NP_PAUSE => {
-                    if player.snapshot().is_paused {
-                        player.resume().await;
-                    } else {
-                        player.pause().await;
-                    }
+                components::NP_PAUSE if player.snapshot().is_paused => {
+                    player.resume().await;
                 }
+                components::NP_PAUSE => player.pause().await,
                 components::NP_SKIP => player.skip(),
                 components::NP_LOOP => {
                     player.cycle_loop_mode().await;
                 }
-                _ => unreachable!(),
+                _ => return,
             }
             let snapshot = player.snapshot();
             let embed = components::now_playing_embed(&snapshot);

@@ -72,7 +72,7 @@ impl Extractor {
     pub async fn search(&self, query: &str, requester_id: u64, count: usize) -> Result<Vec<Track>> {
         let entries = self.search_entries(query, count.max(1)).await?;
         let mut tracks = Vec::with_capacity(entries.len());
-        for item in &entries {
+        for item in entries.iter() {
             let track = track_from_json(item, requester_id, query);
             self.prime_cache(&track.webpage_url, item).await;
             tracks.push(track);
@@ -90,14 +90,20 @@ impl Extractor {
         Ok(Some(track))
     }
 
-    async fn search_entries(&self, query: &str, count: usize) -> Result<Vec<Value>> {
+    // Returns `Arc<Vec<Value>>`: on a cache hit this used to hand back a deep
+    // clone of every JSON result (and, below, insert() cloned the whole freshly
+    // filtered Vec again just to seed the cache). Both callers only ever read
+    // the entries, so sharing them behind an Arc is enough — no callers need
+    // ownership of the Vec itself.
+    async fn search_entries(&self, query: &str, count: usize) -> Result<Arc<Vec<Value>>> {
         let key = query.trim().to_lowercase();
         if let Some(cached) = self.search_cache.get(&key, count).await {
             return Ok(cached);
         }
         let args = ytdlp::search_args(&self.config, query, count);
         let entries = self.run_search(&args).await?;
-        let entries: Vec<Value> = entries.into_iter().filter(is_playable_video).collect();
+        let entries: Arc<Vec<Value>> =
+            Arc::new(entries.into_iter().filter(is_playable_video).collect());
         self.search_cache.insert(key, entries.clone()).await;
         Ok(entries)
     }
@@ -148,7 +154,7 @@ impl Extractor {
         &self,
         track: &Track,
         client_override: Option<&str>,
-    ) -> Result<ResolvedInfo> {
+    ) -> Result<Arc<ResolvedInfo>> {
         if client_override.is_none() {
             if let Some(cached) = self.cache.get(&track.webpage_url).await {
                 tracing::info!(url = %track.webpage_url, "resolve_stream: cache hit");
@@ -165,14 +171,14 @@ impl Extractor {
             resolved_info_from_json(&item)
         });
         self.record_resolve_outcome(result.is_ok());
-        let info = result?;
+        let info = Arc::new(result?);
         self.cache
             .insert(track.webpage_url.clone(), info.clone())
             .await;
         Ok(info)
     }
 
-    pub async fn try_resolve_stream(&self, track: &Track) -> Option<Result<ResolvedInfo>> {
+    pub async fn try_resolve_stream(&self, track: &Track) -> Option<Result<Arc<ResolvedInfo>>> {
         if let Some(cached) = self.cache.get(&track.webpage_url).await {
             return Some(Ok(cached));
         }
@@ -197,6 +203,7 @@ impl Extractor {
             }
         };
         self.record_resolve_outcome(true);
+        let info = Arc::new(info);
         self.cache
             .insert(track.webpage_url.clone(), info.clone())
             .await;
@@ -212,7 +219,7 @@ impl Extractor {
             return;
         }
         if let Ok(info) = resolved_info_from_json(item) {
-            self.cache.insert(webpage_url.to_owned(), info).await;
+            self.cache.insert(webpage_url.to_owned(), Arc::new(info)).await;
         }
     }
 

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use moka::future::Cache;
@@ -15,8 +16,11 @@ pub struct ResolvedInfo {
     pub content_length: Option<u64>,
 }
 
+// Cached as `Arc<T>` rather than `T`: moka clones the value out on every `get`,
+// so caching the bare struct meant every cache *hit* — the hot path — paid for a
+// deep clone of the headers/strings. Caching an `Arc` makes that clone O(1).
 pub struct ResolveCache {
-    inner: Cache<String, ResolvedInfo>,
+    inner: Cache<String, Arc<ResolvedInfo>>,
 }
 
 impl ResolveCache {
@@ -28,11 +32,11 @@ impl ResolveCache {
         Self { inner }
     }
 
-    pub async fn get(&self, webpage_url: &str) -> Option<ResolvedInfo> {
+    pub async fn get(&self, webpage_url: &str) -> Option<Arc<ResolvedInfo>> {
         self.inner.get(webpage_url).await
     }
 
-    pub async fn insert(&self, webpage_url: String, info: ResolvedInfo) {
+    pub async fn insert(&self, webpage_url: String, info: Arc<ResolvedInfo>) {
         self.inner.insert(webpage_url, info).await;
     }
 
@@ -42,7 +46,7 @@ impl ResolveCache {
 }
 
 pub struct SearchCache {
-    inner: Cache<String, Vec<serde_json::Value>>,
+    inner: Cache<String, Arc<Vec<serde_json::Value>>>,
 }
 
 impl SearchCache {
@@ -54,12 +58,12 @@ impl SearchCache {
         Self { inner }
     }
 
-    pub async fn get(&self, key: &str, min_count: usize) -> Option<Vec<serde_json::Value>> {
+    pub async fn get(&self, key: &str, min_count: usize) -> Option<Arc<Vec<serde_json::Value>>> {
         let cached = self.inner.get(key).await?;
         (cached.len() >= min_count).then_some(cached)
     }
 
-    pub async fn insert(&self, key: String, entries: Vec<serde_json::Value>) {
+    pub async fn insert(&self, key: String, entries: Arc<Vec<serde_json::Value>>) {
         self.inner.insert(key, entries).await;
     }
 }

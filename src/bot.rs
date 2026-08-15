@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use dashmap::DashMap;
 use moka::sync::Cache;
 use poise::serenity_prelude as serenity;
@@ -159,7 +160,7 @@ pub async fn run(config: Config, db: Database, recent_logs: crate::logbuf::Recen
 
                 let songbird = songbird::get(ctx)
                     .await
-                    .expect("songbird manager not registered");
+                    .context("songbird manager not registered")?;
                 let extractor = Arc::new(Extractor::new(setup_config.clone()));
 
                 let http_client = reqwest::Client::new();

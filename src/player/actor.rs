@@ -96,7 +96,7 @@ pub enum PlayerCommand {
     Shutdown,
     ResolveDone {
         generation: u64,
-        result: Result<crate::extraction::ResolvedInfo>,
+        result: Result<Arc<crate::extraction::ResolvedInfo>>,
     },
 
     AutoplayReady(Option<Track>),
@@ -253,7 +253,7 @@ impl PlayerActor {
 
         let db = self.db.clone();
         let guild_id = self.guild_id.get();
-        let mut queued: Vec<Track> = Vec::with_capacity(self.state.queue.len() + 1);
+        let mut queued: Vec<Arc<Track>> = Vec::with_capacity(self.state.queue.len() + 1);
         if let Some(current) = &self.state.current {
             queued.push(current.clone());
         }
@@ -606,6 +606,7 @@ impl PlayerActor {
 
         let was_idle = self.state.current.is_none();
 
+        let track = Arc::new(track);
         if front {
             self.state.push_front(track);
         } else {
@@ -722,7 +723,7 @@ impl PlayerActor {
         }
     }
 
-    fn maybe_autoplay(&mut self, seed: Option<Track>) {
+    fn maybe_autoplay(&mut self, seed: Option<Arc<Track>>) {
         if self.state.current.is_some() {
             return;
         }
@@ -737,7 +738,7 @@ impl PlayerActor {
         }
     }
 
-    fn spawn_autoplay_search(&mut self, seed: Track) {
+    fn spawn_autoplay_search(&mut self, seed: Arc<Track>) {
         let Some(lastfm) = self.lastfm.clone() else { return };
         let extractor = self.extractor.clone();
         let self_tx = self.self_tx.clone();
@@ -754,7 +755,7 @@ impl PlayerActor {
             if was_idle {
                 self.announce_autoplay(&track);
             }
-            self.state.push_back(track);
+            self.state.push_back(Arc::new(track));
             if was_idle {
                 self.advance_and_resolve_next();
             }
@@ -826,7 +827,7 @@ impl PlayerActor {
     async fn handle_resolve_done(
         &mut self,
         generation: u64,
-        result: Result<crate::extraction::ResolvedInfo>,
+        result: Result<Arc<crate::extraction::ResolvedInfo>>,
     ) {
         if generation != self.current_generation {
             return;
@@ -857,8 +858,8 @@ impl PlayerActor {
 
     async fn finish_starting_track(
         &mut self,
-        track: Track,
-        resolved: crate::extraction::ResolvedInfo,
+        track: Arc<Track>,
+        resolved: Arc<crate::extraction::ResolvedInfo>,
         generation: u64,
     ) -> Result<()> {
         let Some(call) = self.call.clone() else {
@@ -887,7 +888,7 @@ impl PlayerActor {
 
         let input: Input = HttpRequest {
             client: self.http_client.clone(),
-            request: resolved.stream_url,
+            request: resolved.stream_url.clone(),
             headers,
             content_length: resolved.content_length,
         }
@@ -920,12 +921,18 @@ impl PlayerActor {
 
         let db = self.db.clone();
         let guild_id = self.guild_id.get();
-        let requester_id = track.requester_id;
-        let duration = track.duration;
-        let Track { title, webpage_url, .. } = track;
+        // Move the Arc itself into the task instead of cloning title/webpage_url
+        // out — one refcount bump instead of two String allocations.
+        let track = track.clone();
         tokio::spawn(async move {
             if let Err(e) = db
-                .add_play_history(guild_id, &title, &webpage_url, requester_id, duration)
+                .add_play_history(
+                    guild_id,
+                    &track.title,
+                    &track.webpage_url,
+                    track.requester_id,
+                    track.duration,
+                )
                 .await
             {
                 tracing::warn!(guild_id = guild_id, error = %e, "finish_starting_track: failed to record play history");
@@ -943,7 +950,7 @@ impl PlayerActor {
         if count == 0 {
             return;
         }
-        let tracks: Vec<Track> = self.state.queue.iter().take(count).cloned().collect();
+        let tracks: Vec<Arc<Track>> = self.state.queue.iter().take(count).cloned().collect();
         let extractor = self.extractor.clone();
         let guild_id = self.guild_id;
         let join_handle = tokio::spawn(async move {

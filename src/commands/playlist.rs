@@ -21,26 +21,20 @@ pub async fn save(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     };
     let snapshot = ctx.data().player_for(guild_id).await.snapshot();
 
-    let mut all_tracks: Vec<&Track> = Vec::new();
-    if let Some(current) = &snapshot.current {
-        all_tracks.push(current);
-    }
-    all_tracks.extend(snapshot.queue.iter());
+    let to_ref = |t: &Track| QueueEntryRef {
+        query: &t.query,
+        title: &t.title,
+        webpage_url: &t.webpage_url,
+        requester_id: t.requester_id,
+    };
+    let mut entries: Vec<QueueEntryRef> = Vec::with_capacity(snapshot.queue.len() + 1);
+    entries.extend(snapshot.current.as_deref().map(to_ref));
+    entries.extend(snapshot.queue.iter().map(|t| to_ref(t)));
 
-    if all_tracks.is_empty() {
+    if entries.is_empty() {
         ctx.say("Queue is empty — nothing to save.").await?;
         return Ok(());
     }
-
-    let entries: Vec<QueueEntryRef> = all_tracks
-        .iter()
-        .map(|t| QueueEntryRef {
-            query: &t.query,
-            title: &t.title,
-            webpage_url: &t.webpage_url,
-            requester_id: t.requester_id,
-        })
-        .collect();
 
     ctx.data()
         .db

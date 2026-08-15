@@ -101,19 +101,29 @@ pub async fn vibe(ctx: Context<'_>, #[rest] artist: String) -> anyhow::Result<()
             continue;
         };
         let title = track.escaped_title();
-        queued.push(title);
-        let mut history = data.vibe_history.entry(guild_id).or_default();
-        let key = vibe_history_key(query);
-        history.retain(|k| k != &key);
-        history.push_back(key);
-        while history.len() > VIBE_HISTORY_CAP {
-            history.pop_front();
-        }
 
-        let player = player.clone();
-        tokio::spawn(async move {
-            let _ = player.play(track, false, channel_id, text_channel_id).await;
-        });
+        // Await in place (matching play_playlist / playlist::load) instead of
+        // spawning a detached task per track: that let the "Queued" summary claim
+        // success before play() had actually run, discarded any errors it returned,
+        // and gave no guarantee tracks would land in the queue in `queries` order.
+        match player.play(track, false, channel_id, text_channel_id).await {
+            Ok(outcome) if !outcome.failed => {
+                queued.push(title);
+                let mut history = data.vibe_history.entry(guild_id).or_default();
+                let key = vibe_history_key(query);
+                history.retain(|k| k != &key);
+                history.push_back(key);
+                while history.len() > VIBE_HISTORY_CAP {
+                    history.pop_front();
+                }
+            }
+            Ok(_) => {
+                tracing::info!(%guild_id, %query, "vibe: track resolved but failed to play, skipping");
+            }
+            Err(e) => {
+                tracing::warn!(%guild_id, %query, error = %e, "vibe: play() failed");
+            }
+        }
     }
 
     if queued.is_empty() {

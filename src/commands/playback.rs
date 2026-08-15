@@ -170,18 +170,16 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
         return Ok(());
     };
 
-    let trimmed = query.trim().to_owned();
-    let looks_like_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
-    if looks_like_url && is_playlist_url(&trimmed) {
-        return play_playlist(ctx, guild_id, author_id, channel_id, &trimmed, front).await;
+    let trimmed = query.trim();
+    let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
+    if is_url && is_playlist_url(trimmed) {
+        return play_playlist(ctx, guild_id, author_id, channel_id, trimmed, front).await;
     }
 
     tracing::info!(guild_id = %guild_id, user = %author_id, query = %query, front, "!play: received");
     let data = ctx.data();
 
     let search_start = std::time::Instant::now();
-    let trimmed = query.trim();
-    let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
     let say_fut = ctx.say(format!("Searching for `{query}`..."));
     let resolve_fut = async {
         if is_url {

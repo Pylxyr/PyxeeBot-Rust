@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use pyxeebot::models::{LoopMode, Track};
 use pyxeebot::player::PlayerState;
 
@@ -16,6 +18,10 @@ fn track(title: &str, duration: i64) -> Track {
     }
 }
 
+fn atrack(title: &str, duration: i64) -> Arc<Track> {
+    Arc::new(track(title, duration))
+}
+
 fn sum_durations(state: &PlayerState) -> i64 {
     state.queue.iter().map(|t| t.duration).sum()
 }
@@ -23,8 +29,8 @@ fn sum_durations(state: &PlayerState) -> i64 {
 #[test]
 fn push_back_accumulates_duration() {
     let mut state = PlayerState::new(10, false, false);
-    state.push_back(track("a", 100));
-    state.push_back(track("b", 50));
+    state.push_back(atrack("a", 100));
+    state.push_back(atrack("b", 50));
     assert_eq!(state.total_duration, 150);
     assert_eq!(state.total_duration, sum_durations(&state));
 }
@@ -32,10 +38,10 @@ fn push_back_accumulates_duration() {
 #[test]
 fn push_back_evicts_front_at_capacity_and_fixes_total_duration() {
     let mut state = PlayerState::new(2, false, false);
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
 
-    state.push_back(track("c", 50));
+    state.push_back(atrack("c", 50));
     assert_eq!(state.queue.len(), 2);
     assert_eq!(state.queue[0].title, "b");
     assert_eq!(state.queue[1].title, "c");
@@ -47,9 +53,9 @@ fn push_back_evicts_front_at_capacity_and_fixes_total_duration() {
 fn push_front_evicts_back_at_capacity_and_fixes_total_duration() {
 
     let mut state = PlayerState::new(2, false, false);
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
-    state.push_front(track("prev", 50));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
+    state.push_front(atrack("prev", 50));
     assert_eq!(state.queue.len(), 2);
     assert_eq!(state.queue[0].title, "prev");
     assert_eq!(state.queue[1].title, "a");
@@ -61,8 +67,8 @@ fn push_front_evicts_back_at_capacity_and_fixes_total_duration() {
 #[test]
 fn pop_front_decrements_duration() {
     let mut state = PlayerState::new(10, false, false);
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
     let popped = state.pop_front().unwrap();
     assert_eq!(popped.title, "a");
     assert_eq!(state.total_duration, 20);
@@ -77,9 +83,9 @@ fn play_previous_with_no_history_returns_false() {
 #[test]
 fn play_previous_moves_history_to_current_and_current_back_to_queue() {
     let mut state = PlayerState::new(10, false, false);
-    state.history.push(track("prev", 50));
-    state.current = Some(track("current", 30));
-    state.push_back(track("next", 10));
+    state.history.push_back(atrack("prev", 50));
+    state.current = Some(atrack("current", 30));
+    state.push_back(atrack("next", 10));
 
     assert!(state.play_previous());
     assert_eq!(state.current.as_ref().unwrap().title, "prev");
@@ -94,10 +100,10 @@ fn play_previous_moves_history_to_current_and_current_back_to_queue() {
 fn play_previous_respects_capacity_eviction() {
 
     let mut state = PlayerState::new(2, false, false);
-    state.history.push(track("prev", 50));
-    state.current = Some(track("current", 30));
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
+    state.history.push_back(atrack("prev", 50));
+    state.current = Some(atrack("current", 30));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
 
     assert!(state.play_previous());
     assert_eq!(state.current.as_ref().unwrap().title, "prev");
@@ -112,9 +118,9 @@ fn play_previous_respects_capacity_eviction() {
 fn requeue_finished_loop_one_pushes_front_with_eviction() {
     let mut state = PlayerState::new(2, false, false);
     state.loop_mode = LoopMode::One;
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
-    state.requeue_finished(track("finished", 100));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
+    state.requeue_finished(atrack("finished", 100));
     assert_eq!(state.queue.len(), 2);
     assert_eq!(state.queue[0].title, "finished");
     assert_eq!(state.queue[1].title, "a");
@@ -126,9 +132,9 @@ fn requeue_finished_loop_one_pushes_front_with_eviction() {
 fn requeue_finished_loop_all_pushes_back_with_eviction() {
     let mut state = PlayerState::new(2, false, false);
     state.loop_mode = LoopMode::All;
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
-    state.requeue_finished(track("finished", 100));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
+    state.requeue_finished(atrack("finished", 100));
     assert_eq!(state.queue.len(), 2);
     assert_eq!(state.queue[0].title, "b");
     assert_eq!(state.queue[1].title, "finished");
@@ -140,8 +146,8 @@ fn requeue_finished_loop_all_pushes_back_with_eviction() {
 fn requeue_finished_loop_off_drops_the_track() {
     let mut state = PlayerState::new(10, false, false);
     state.loop_mode = LoopMode::Off;
-    state.push_back(track("a", 10));
-    state.requeue_finished(track("finished", 100));
+    state.push_back(atrack("a", 10));
+    state.requeue_finished(atrack("finished", 100));
     assert_eq!(state.queue.len(), 1);
     assert_eq!(state.total_duration, 10);
 }
@@ -160,11 +166,11 @@ fn should_disconnect_when_idle_requires_empty_queue_and_no_current() {
     let mut state = PlayerState::new(10, false, false);
     assert!(state.should_disconnect_when_idle());
 
-    state.current = Some(track("a", 10));
+    state.current = Some(atrack("a", 10));
     assert!(!state.should_disconnect_when_idle());
     state.current = None;
 
-    state.push_back(track("b", 10));
+    state.push_back(atrack("b", 10));
     assert!(!state.should_disconnect_when_idle());
     state.pop_front();
     assert!(state.should_disconnect_when_idle());
@@ -176,8 +182,8 @@ fn should_disconnect_when_idle_requires_empty_queue_and_no_current() {
 #[test]
 fn clear_resets_total_duration() {
     let mut state = PlayerState::new(10, false, false);
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
     let removed = state.clear();
     assert_eq!(removed, 2);
     assert_eq!(state.total_duration, 0);
@@ -187,9 +193,9 @@ fn clear_resets_total_duration() {
 #[test]
 fn remove_decrements_total_duration() {
     let mut state = PlayerState::new(10, false, false);
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
-    state.push_back(track("c", 30));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
+    state.push_back(atrack("c", 30));
     let removed = state.remove(1).unwrap();
     assert_eq!(removed.title, "b");
     assert_eq!(state.total_duration, 40);
@@ -199,7 +205,7 @@ fn remove_decrements_total_duration() {
 #[test]
 fn remove_out_of_bounds_returns_none_and_leaves_state_untouched() {
     let mut state = PlayerState::new(10, false, false);
-    state.push_back(track("a", 10));
+    state.push_back(atrack("a", 10));
     assert!(state.remove(5).is_none());
     assert_eq!(state.total_duration, 10);
 }
@@ -207,9 +213,9 @@ fn remove_out_of_bounds_returns_none_and_leaves_state_untouched() {
 #[test]
 fn move_track_reorders_without_changing_duration() {
     let mut state = PlayerState::new(10, false, false);
-    state.push_back(track("a", 10));
-    state.push_back(track("b", 20));
-    state.push_back(track("c", 30));
+    state.push_back(atrack("a", 10));
+    state.push_back(atrack("b", 20));
+    state.push_back(atrack("c", 30));
     assert!(state.move_track(0, 2));
     assert_eq!(state.queue[0].title, "b");
     assert_eq!(state.queue[1].title, "c");
@@ -220,7 +226,7 @@ fn move_track_reorders_without_changing_duration() {
 #[test]
 fn move_track_out_of_bounds_returns_false() {
     let mut state = PlayerState::new(10, false, false);
-    state.push_back(track("a", 10));
+    state.push_back(atrack("a", 10));
     assert!(!state.move_track(0, 5));
     assert!(!state.move_track(5, 0));
 }
@@ -234,9 +240,9 @@ fn user_queue_count_filters_by_requester() {
     t2.requester_id = 222;
     let mut t3 = track("c", 10);
     t3.requester_id = 111;
-    state.push_back(t1);
-    state.push_back(t2);
-    state.push_back(t3);
+    state.push_back(Arc::new(t1));
+    state.push_back(Arc::new(t2));
+    state.push_back(Arc::new(t3));
     assert_eq!(state.user_queue_count(111), 2);
     assert_eq!(state.user_queue_count(222), 1);
     assert_eq!(state.user_queue_count(999), 0);
@@ -245,8 +251,8 @@ fn user_queue_count_filters_by_requester() {
 #[test]
 fn advance_moves_current_to_history_and_pulls_next() {
     let mut state = PlayerState::new(10, false, false);
-    state.current = Some(track("now-playing", 10));
-    state.push_back(track("next", 20));
+    state.current = Some(atrack("now-playing", 10));
+    state.push_back(atrack("next", 20));
     let new_current = state.advance();
     assert_eq!(new_current.unwrap().title, "next");
     assert_eq!(state.history.len(), 1);
