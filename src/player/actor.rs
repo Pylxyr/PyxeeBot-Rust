@@ -984,10 +984,19 @@ async fn find_autoplay_track(
         }
     };
     for artist in similar {
-        if let Ok(Some(track)) = extractor.search_top(&artist, seed.requester_id).await {
-            tracing::info!(%guild_id, %artist, title = %track.title, "autoplay: found a candidate");
-            return Some(track);
+        if artist.eq_ignore_ascii_case(&seed_artist) {
+            tracing::info!(%guild_id, %artist, "autoplay: skipping candidate, same as seed artist");
+            continue;
         }
+        let Ok(Some(track)) = extractor.search_top(&artist, seed.requester_id).await else {
+            continue;
+        };
+        if track.webpage_url == seed.webpage_url {
+            tracing::info!(%guild_id, %artist, title = %track.title, "autoplay: skipping candidate, same video as seed");
+            continue;
+        }
+        tracing::info!(%guild_id, %artist, title = %track.title, "autoplay: found a candidate");
+        return Some(track);
     }
     tracing::info!(%guild_id, "autoplay: nothing playable found");
     None
