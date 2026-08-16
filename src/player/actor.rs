@@ -719,8 +719,31 @@ impl PlayerActor {
             }
         } else {
             tracing::warn!(guild_id = %self.guild_id, "already retried this track once, discarding and moving on");
+            if let Some(t) = self.state.current.clone() {
+                self.announce_playback_failure(&t);
+            }
             self.discard_current_and_advance();
         }
+    }
+
+    // Fires once per track that's actually given up on (after the one retry
+    // above already failed) — not on every transient error, so a track that
+    // succeeds on retry stays silent instead of spamming the channel.
+    fn announce_playback_failure(&self, track: &Track) {
+        let Some(channel_id) = self.announce_channel_id else {
+            return;
+        };
+        let http = self.http.clone();
+        let title = track.escaped_title();
+        let guild_id = self.guild_id.get();
+        tokio::spawn(async move {
+            let builder = CreateMessage::new().content(format!(
+                "⚠️ Couldn't play **{title}** — the source may be unavailable, region-locked, or removed. Skipping it."
+            ));
+            if let Err(e) = channel_id.send_message(&http, builder).await {
+                tracing::warn!(guild_id = guild_id, error = %e, "failed to send playback-failure announcement");
+            }
+        });
     }
 
     fn maybe_autoplay(&mut self, seed: Option<Arc<Track>>) {
