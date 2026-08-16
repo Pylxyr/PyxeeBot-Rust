@@ -2,6 +2,20 @@ use crate::bot::Context;
 use crate::db::QueueEntryRef;
 use crate::models::Track;
 
+// Free `fn`, not a closure: a closure infers one concrete lifetime for its
+// signature, but `to_ref` below is called against two different borrows
+// (`snapshot.current.as_deref()` and `snapshot.queue.iter()`), so it needs the
+// `for<'a> fn(&'a Track) -> QueueEntryRef<'a>` generalization that only a
+// plain `fn` item gets from lifetime elision.
+fn to_ref(t: &Track) -> QueueEntryRef<'_> {
+    QueueEntryRef {
+        query: &t.query,
+        title: &t.title,
+        webpage_url: &t.webpage_url,
+        requester_id: t.requester_id,
+    }
+}
+
 #[poise::command(
     prefix_command,
     slash_command,
@@ -21,12 +35,6 @@ pub async fn save(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
     };
     let snapshot = ctx.data().player_for(guild_id).await.snapshot();
 
-    let to_ref = |t: &Track| QueueEntryRef {
-        query: &t.query,
-        title: &t.title,
-        webpage_url: &t.webpage_url,
-        requester_id: t.requester_id,
-    };
     let mut entries: Vec<QueueEntryRef> = Vec::with_capacity(snapshot.queue.len() + 1);
     entries.extend(snapshot.current.as_deref().map(to_ref));
     entries.extend(snapshot.queue.iter().map(|t| to_ref(t)));
