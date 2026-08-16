@@ -341,11 +341,13 @@ pub async fn voteskip(ctx: Context<'_>) -> anyhow::Result<()> {
     };
     let needed = listeners.div_ceil(2).max(1);
 
-    let key = current.webpage_url.clone();
     let (have, passed) = {
         let mut entry = ctx.data().skip_votes.entry(guild_id).or_default();
-        if entry.0 != key {
-            *entry = (key, std::collections::HashSet::new());
+        // Only clone the URL when we actually need to (re)seed the entry — the
+        // common case is repeat votes for the same still-current track, where
+        // `entry.0` already matches and no clone is needed at all.
+        if entry.0 != current.webpage_url {
+            *entry = (current.webpage_url.clone(), std::collections::HashSet::new());
         }
         entry.1.insert(ctx.author().id.get());
         (entry.1.len(), entry.1.len() >= needed)

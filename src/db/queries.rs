@@ -6,6 +6,11 @@ use sqlx::FromRow;
 use super::{Database, CHECKPOINT_EVERY_N_WRITES, HISTORY_MAX_ROWS, TRIM_EVERY_N_WRITES};
 use crate::models::Track;
 
+// Rows per multi-row INSERT statement when batch-writing playlists/queue
+// snapshots. Kept well under SQLite's default bound-parameter ceiling
+// (SQLITE_MAX_VARIABLE_NUMBER, historically 999) even at 6 params/row.
+const SQL_INSERT_BATCH_SIZE: usize = 100;
+
 #[derive(Debug, FromRow)]
 pub struct PlaylistSummary {
     pub name: String,
@@ -326,20 +331,24 @@ impl Database {
             .execute(&mut *tx)
             .await?;
 
-        for (position, entry) in entries.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO saved_playlist_items
-                     (guild_id, playlist_name, position, query, title, webpage_url)
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(guild_id as i64)
-            .bind(name)
-            .bind(position as i64)
-            .bind(entry.query)
-            .bind(entry.title)
-            .bind(entry.webpage_url)
-            .execute(&mut *tx)
-            .await?;
+        // Batched multi-row INSERT instead of one round trip per track: cuts
+        // statement-execution overhead roughly BATCH_SIZE-fold for large
+        // playlists. Chunked (rather than one giant statement) to stay well
+        // under SQLite's per-statement bound-parameter limit.
+        for (chunk_idx, chunk) in entries.chunks(SQL_INSERT_BATCH_SIZE).enumerate() {
+            let base_position = chunk_idx * SQL_INSERT_BATCH_SIZE;
+            let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "INSERT INTO saved_playlist_items (guild_id, playlist_name, position, query, title, webpage_url) ",
+            );
+            qb.push_values(chunk.iter().enumerate(), |mut b, (i, entry)| {
+                b.push_bind(guild_id as i64)
+                    .push_bind(name)
+                    .push_bind((base_position + i) as i64)
+                    .push_bind(entry.query)
+                    .push_bind(entry.title)
+                    .push_bind(entry.webpage_url);
+            });
+            qb.build().execute(&mut *tx).await?;
         }
 
         tx.commit().await
@@ -426,20 +435,20 @@ impl Database {
             .bind(guild_id as i64)
             .execute(&mut *tx)
             .await?;
-        for (position, entry) in entries.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO queue_snapshots
-                     (guild_id, position, query, title, webpage_url, requester_id)
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(guild_id as i64)
-            .bind(position as i64)
-            .bind(entry.query)
-            .bind(entry.title)
-            .bind(entry.webpage_url)
-            .bind(entry.requester_id as i64)
-            .execute(&mut *tx)
-            .await?;
+        for (chunk_idx, chunk) in entries.chunks(SQL_INSERT_BATCH_SIZE).enumerate() {
+            let base_position = chunk_idx * SQL_INSERT_BATCH_SIZE;
+            let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "INSERT INTO queue_snapshots (guild_id, position, query, title, webpage_url, requester_id) ",
+            );
+            qb.push_values(chunk.iter().enumerate(), |mut b, (i, entry)| {
+                b.push_bind(guild_id as i64)
+                    .push_bind((base_position + i) as i64)
+                    .push_bind(entry.query)
+                    .push_bind(entry.title)
+                    .push_bind(entry.webpage_url)
+                    .push_bind(entry.requester_id as i64);
+            });
+            qb.build().execute(&mut *tx).await?;
         }
         tx.commit().await?;
 

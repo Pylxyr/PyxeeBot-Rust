@@ -29,6 +29,10 @@ pub struct BotData {
     pub http_client: reqwest::Client,
     pub http: Arc<serenity::Http>,
     pub players: DashMap<serenity::GuildId, Arc<GuildPlayer>>,
+    // Serializes the "guild not seen yet" slow path in `player_for` so two
+    // concurrent first-commands for the same new guild don't both redo the
+    // stay_connected/autoplay/volume DB reads before racing on `players.entry`.
+    player_init_lock: tokio::sync::Mutex<()>,
 
     pub recent_searches: Cache<serenity::GuildId, Arc<Vec<Track>>>,
 
@@ -43,6 +47,15 @@ pub struct BotData {
 impl BotData {
 
     pub async fn player_for(&self, guild_id: serenity::GuildId) -> Arc<GuildPlayer> {
+        if let Some(existing) = self.players.get(&guild_id) {
+            return existing.clone();
+        }
+        // Double-checked locking: hold the slow-path lock only for the rare
+        // "first command ever for this guild" case, and re-check `players`
+        // after acquiring it — another task may have finished creating the
+        // entry while we were waiting, in which case we skip the DB reads
+        // entirely instead of redoing them.
+        let _guard = self.player_init_lock.lock().await;
         if let Some(existing) = self.players.get(&guild_id) {
             return existing.clone();
         }
@@ -184,6 +197,7 @@ pub async fn run(config: Config, db: Database, recent_logs: crate::logbuf::Recen
                     http_client,
                     http: ctx.http.clone(),
                     players: DashMap::new(),
+                    player_init_lock: tokio::sync::Mutex::new(()),
                     recent_searches: Cache::builder()
                         .max_capacity(200)
                         .time_to_live(Duration::from_secs(30 * 60))
