@@ -160,6 +160,15 @@ pub struct PlayerActor {
     pending_play_reply: Option<(oneshot::Sender<Result<PlayOutcome>>, usize)>,
     prefetch_task: Option<AbortHandle>,
 
+    // Proactive autoplay prefetch: true while a search spawned by
+    // maybe_prefetch_autoplay() is in flight, to avoid firing a second one
+    // on every subsequent command while we wait. attempted_for holds the
+    // webpage_url of the current track we last tried prefetching after, so
+    // a search that found nothing isn't retried every command — only once
+    // the current track actually changes (or autoplay is re-enabled).
+    autoplay_prefetch_pending: bool,
+    autoplay_prefetch_attempted_for: Option<String>,
+
     volume: u8,
 }
 
@@ -213,6 +222,8 @@ impl PlayerActor {
             last_finished_generation: None,
             pending_play_reply: None,
             prefetch_task: None,
+            autoplay_prefetch_pending: false,
+            autoplay_prefetch_attempted_for: None,
             volume,
         };
         tokio::spawn(actor.run());
@@ -228,6 +239,7 @@ impl PlayerActor {
             if is_shutdown {
                 break;
             }
+            self.maybe_prefetch_autoplay();
         }
     }
 
@@ -346,6 +358,7 @@ impl PlayerActor {
                 self.resolve_pending_play(false, false);
                 self.state.clear();
                 self.state.current = None;
+                self.disable_autoplay();
                 self.cancel_timers();
                 self.current_generation += 1;
                 if let Some(handle) = self.prefetch_task.take() {
@@ -407,6 +420,7 @@ impl PlayerActor {
                 }
                 self.state.clear();
                 self.state.current = None;
+                self.disable_autoplay();
                 self.is_paused = false;
                 self.track_started_at = None;
                 self.paused_since = None;
@@ -443,6 +457,12 @@ impl PlayerActor {
             }
             PlayerCommand::SetAutoplay(enabled) => {
                 self.state.autoplay = enabled;
+                if enabled {
+                    // Let a freshly re-enabled autoplay retry immediately even
+                    // if we already gave up prefetching for this exact track
+                    // while it was off.
+                    self.autoplay_prefetch_attempted_for = None;
+                }
             }
             PlayerCommand::CycleLoop { reply } => {
                 self.state.loop_mode = self.state.loop_mode.cycle();
@@ -750,6 +770,12 @@ impl PlayerActor {
         if self.state.current.is_some() {
             return;
         }
+        if self.autoplay_prefetch_pending {
+            // A prefetch fired by maybe_prefetch_autoplay() while the
+            // now-finished track was still playing is already in flight;
+            // let it land instead of spawning a second, redundant search.
+            return;
+        }
         if self.state.autoplay && self.lastfm.is_some() {
             if let Some(seed) = seed {
                 self.spawn_autoplay_search(seed);
@@ -759,6 +785,55 @@ impl PlayerActor {
         if self.state.should_disconnect_when_idle() {
             self.arm_idle_timer();
         }
+    }
+
+    // Starts an autoplay search as soon as the queue empties down to just the
+    // currently-playing track, instead of waiting for that track to finish
+    // first. Without this, autoplay only started searching *after* the
+    // current track ended, leaving an audible gap while it searched and
+    // resolved the next one. Runs after every command (see run()); the
+    // pending/attempted_for guards keep it a no-op on the vast majority of
+    // those calls.
+    fn maybe_prefetch_autoplay(&mut self) {
+        if self.autoplay_prefetch_pending {
+            return;
+        }
+        if !self.state.autoplay || self.lastfm.is_none() || self.call.is_none() {
+            return;
+        }
+        if !self.state.queue.is_empty() {
+            return;
+        }
+        let Some(seed) = self.state.current.clone() else {
+            return;
+        };
+        if self.autoplay_prefetch_attempted_for.as_deref() == Some(seed.webpage_url.as_str()) {
+            return;
+        }
+        self.autoplay_prefetch_attempted_for = Some(seed.webpage_url.clone());
+        self.autoplay_prefetch_pending = true;
+        self.spawn_autoplay_search(seed);
+    }
+
+    // Used by Stop/Leave: turns autoplay off both in memory (so it doesn't
+    // silently keep prefetching once idle) and in the DB (so a freshly
+    // spawned actor after a restart doesn't come back with it still on) —
+    // consistent with how a manual `!autoplay` toggle is persisted. Skips
+    // the DB write entirely if autoplay was already off.
+    fn disable_autoplay(&mut self) {
+        if !self.state.autoplay {
+            return;
+        }
+        self.state.autoplay = false;
+        self.autoplay_prefetch_attempted_for = None;
+        let db = self.db.clone();
+        let guild_id = self.guild_id.get();
+        let default_prefix = self.config.default_prefix.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.set_autoplay(guild_id, false, &default_prefix).await {
+                tracing::warn!(guild_id, error = %e, "failed to persist autoplay disable");
+            }
+        });
     }
 
     fn spawn_autoplay_search(&mut self, seed: Arc<Track>) {
@@ -773,6 +848,10 @@ impl PlayerActor {
     }
 
     fn handle_autoplay_ready(&mut self, track: Option<Track>) {
+        // Always reset — this fires for every search this actor spawns,
+        // whether it came from the proactive prefetch or the reactive
+        // idle-queue path, and whether or not a track was actually found.
+        self.autoplay_prefetch_pending = false;
         if let Some(track) = track.filter(|_| self.state.autoplay && self.call.is_some()) {
             let was_idle = self.state.current.is_none();
             if was_idle {
