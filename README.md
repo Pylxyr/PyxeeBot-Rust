@@ -12,12 +12,10 @@
 ![serenity](https://img.shields.io/badge/serenity-0.12.5-blue)
 ![poise](https://img.shields.io/badge/poise-0.6.2-blue)
 ![songbird](https://img.shields.io/badge/songbird-0.6.0-blue)
-![tokio](https://img.shields.io/badge/tokio-1.52-blue)
+![tokio](https://img.shields.io/badge/tokio-1.53-blue)
 ![sqlx](https://img.shields.io/badge/sqlx-0.9-blue)
 
 🌐 **[pylxyr.github.io/PyxeeBot-Page](https://pylxyr.github.io/PyxeeBot-Page/)**
-
-*<sub>The build badge's `pylxyr/PyxeeBot-Rust` path is inferred (from `BOT_ACTIVITY_URL`'s default and this repo's folder name), not independently confirmed — fix the owner/repo in the URL if that's wrong. Same inference for the website link above.</sub>*
 
 </div>
 
@@ -43,23 +41,28 @@ A Rust rewrite of the original Python PyxeeBot, built for a self-hosted Oracle C
 
 | Category | Commands |
 |---|---|
-| **Playback** | `join`, `leave`, `play` *(resolves a pasted URL directly, not just search terms)*, `playnext` *(queue at the front, ahead of everything else)*, `skip`, `stop`, `pause`, `resume`, `previous`, `loop`, `nowplaying` *(Pause/Skip/Loop/Close buttons, optional auto-refreshing message — see `NP_AUTO_REFRESH`)* |
-| **Queue** | `queue`, `clear`, `shuffle`, `move`, `remove`, `history`, `toptracks`, `toprequestors` |
-| **Search** | `search` *(select-menu to pick a result directly — no relevance ranking, yt-dlp's own result order)* |
+| **Playback** | `join`, `leave`, `play` *(resolves a pasted URL directly, not just search terms)*, `playnext` *(queue at the front, ahead of everything else)*, `skip` *(DJ only — see `voteskip` below)*, `voteskip`/`vsk` *(majority vote of listeners in the bot's channel; DJs skip instantly)*, `stop`, `pause`, `resume`, `volume`, `previous`, `loop`, `nowplaying` *(Pause/Skip/Loop/Close buttons, optional auto-refreshing message — see `NP_AUTO_REFRESH`)* |
+| **Queue** | `queue`, `clear`, `shuffle`, `move`, `remove`, `history`, `toptracks`, `toprequestors`, `mystats` *(a user's request count + top tracks, defaults to yourself)* |
+| **Search** | `search`/`s` *(select-menu to pick a result directly — no relevance ranking, yt-dlp's own result order; results stay pickable for 30 minutes; Close button to dismiss)* |
 | **Playlists** | `playlist save`, `playlist load`, `playlist list`, `playlist show`, `playlist delete` |
-| **Curation** | `vibe` *(Last.fm-powered similar-artist discovery)*, `autoplay` *(auto-queues a similar track instead of going idle — requires `LASTFM_API_KEY`)* |
+| **Curation** | `vibe` *(Last.fm-powered similar-artist discovery)*, `autoplay` *(proactively queues a similar track once the queue empties behind the one currently playing, instead of waiting for it to end first — requires `LASTFM_API_KEY`; auto-disables on `stop`/`leave`)* |
 | **Admin** | `stay` *(24/7 mode)*, `setdj`, `cleardj`, `dj`, `setprefix` *(per-guild custom prefix)*, `stats` |
+| **Utility** | `ping`, `lyrics` |
+
+A track that can't actually be played (removed, region-locked, taken down, etc.) gets announced in-channel with a plain-language reason instead of silently disappearing from the queue.
 
 ### Permissions
 
 | Commands | Requirement |
 |---|---|
-| `clear`, `shuffle`, `move` | DJ role or Manage Channels |
+| `clear`, `shuffle`, `move`, `autoplay` | DJ role or Manage Channels |
+| `skip` | DJ role or Manage Channels — see `voteskip` for the non-DJ path |
+| `voteskip` | Majority of listeners in the bot's voice channel (DJs skip instantly, no vote needed) |
 | `remove` | The track's requester, or a DJ |
 | `playlist delete` | The playlist's creator, or a DJ |
-| `skip`, `stop`, `pause`, `resume`, `previous`, `loop` | Same voice channel as the bot (DJs exempt) |
+| `leave`, `stop`, `pause`, `resume`, `volume` *(when setting it)*, `previous`, `loop` | Same voice channel as the bot (DJs exempt) |
 
-The Now Playing message's Pause/Skip/Loop buttons enforce the identical checks as their text-command equivalents. Close is unrestricted — dismissing the message doesn't touch playback, so anyone can hide it.
+The Now Playing message's Pause/Loop buttons enforce the same same-voice-channel-or-DJ check as their text-command equivalents. Its Skip button uses that same check too — looser than the `!skip` text command, which requires a DJ outright. Close is unrestricted on both the Now Playing panel and search results — dismissing a message doesn't touch playback, so anyone can hide either.
 
 ---
 
@@ -67,9 +70,9 @@ The Now Playing message's Pause/Skip/Loop buttons enforce the identical checks a
 
 | Module | What it does |
 |---|---|
-| `player/` | One actor per guild (`PlayerActor`), driven by an mpsc command channel, broadcasting read-only state via a `watch` channel (`GuildPlayer` is the public handle). `PlayerState` (`queue.rs`) is a pure, fully-tested queue/loop-mode state machine, deliberately kept independent of songbird types. |
-| `extraction/` | yt-dlp subprocess wrapper plus two moka-backed caches (TTL-based, no manual expiry bookkeeping): a resolve cache for stream URLs and a search-results cache shared across `!play`/`!vibe`/`!search`. Two independent semaphores gate concurrency — `ytdlp_concurrent_extracts` for full per-video resolves, `ytdlp_curation_concurrency` for lighter `--flat-playlist` search listings. No result ranking — `!play`/`!vibe` take yt-dlp's own top hit directly; `!search` lists its raw order for you to pick from. |
-| `db/` | SQLite via sqlx, WAL mode. Guild settings are cached in-memory (`DashMap`) after first read. |
+| `player/` | One actor per guild (`PlayerActor`), driven by an mpsc command channel, broadcasting read-only state via a `watch` channel (`GuildPlayer` is the public handle). Queued/current/history tracks are held as `Arc<Track>`, so broadcasting a snapshot after every command is a handful of refcount bumps, not a deep clone of the queue. `PlayerState` (`queue.rs`) is a pure, fully-tested queue/loop-mode state machine, deliberately kept independent of songbird types. |
+| `extraction/` | yt-dlp subprocess wrapper plus two moka-backed caches (TTL-based, no manual expiry bookkeeping, values shared via `Arc` so a cache hit is cheap): a resolve cache for stream URLs and a search-results cache shared across `!play`/`!vibe`/`!search`. Two independent semaphores gate concurrency — `ytdlp_concurrent_extracts` for full per-video resolves, `ytdlp_curation_concurrency` for lighter `--flat-playlist` search listings. No result ranking — `!play`/`!vibe` take yt-dlp's own top hit directly; `!search` lists its raw order for you to pick from. |
+| `db/` | SQLite via sqlx, WAL mode. Guild settings are cached in-memory (`DashMap`) after first read. Multi-row writes (queue snapshots, saved playlists) go through a single batched `INSERT` inside a transaction rather than one round trip per track. |
 | `events.rs` | Voice-state tracking (empty-channel/stay-connected disconnect logic, force-kick rejoin) and component-interaction routing (buttons, select menus). |
 | `lastfm.rs` | Minimal `artist.getsimilar` / `track.search` / `track.getsimilar` client for curation features. |
 
@@ -82,8 +85,9 @@ A handful of things are specifically tuned to get audio playing as fast as possi
 - A pasted URL's extraction result primes the resolve cache, so the speculative resolve above is a hit instead of a redundant second full extraction.
 - Starting the very first track into an empty queue no longer blocks the guild's actor — it resolves in the background through the same path every other track advance uses, so a `!skip`/`!stop`/second `!play` issued in that window stays responsive instead of queueing behind it.
 - Background prefetch resolves upcoming tracks one at a time, not concurrently — measured on a single-vCPU box, running several extractions in parallel slows each one down rather than speeding the batch up. A fresh prefetch call (from `!move`, `!shuffle`, `!remove`, or a new track starting) cancels whatever prefetch was still in flight, so reordering the queue re-prioritizes immediately instead of waiting behind stale work.
-- `!vibe` searches and queues one candidate at a time for the same reason — concurrent yt-dlp calls measured 2-3x slower each under contention, not faster in aggregate, and each track queues the moment its own search resolves rather than waiting for the slowest of a batch.
-- The queue snapshot persisted for `restore_queue_on_restart` is hashed before cloning, so an unchanged queue costs a hash compare instead of a full clone on every command.
+- `!vibe` resolves and queues one candidate fully before moving to the next — same reasoning as prefetch above, plus it means the "Queued N track(s)" reply always reflects tracks that were actually confirmed playable, not just found in search.
+- When autoplay is on, the next track starts searching as soon as the queue empties out behind the one currently playing, instead of waiting for it to finish first — the gap that used to exist between one track ending and autoplay finding the next one is gone in the common case.
+- The queue snapshot persisted for `restore_queue_on_restart` is skipped entirely on commands that didn't touch the queue, and hash-compared against the last write on ones that did, so an unchanged queue costs a dirty-flag check (or a hash compare) instead of a write on every command.
 - Repeat search queries across `!play`/`!vibe`/`!search` hit a raw-results cache instead of re-running yt-dlp, shared across all three regardless of which one populated it.
 
 What's *not* fixable from here: on constrained hardware, a cold (never-searched, never-resolved) track still pays real yt-dlp cost — a flat-playlist search, plus a full extraction that includes solving YouTube's JS anti-bot challenge. That's genuine CPU-bound work; profiling on a single-vCPU box showed the challenge-solving step alone accounting for several seconds of real user-space CPU time, confirmed independently of the bot via a standalone `yt-dlp` timing run. There's no code-level fix for that part.
@@ -124,7 +128,7 @@ All configuration is via environment variables (typically a `.env` file next to 
 | `YTDLP_SOCKET_TIMEOUT` | `15` | seconds, min `5` |
 | `YTDLP_PREFETCH_COUNT` | `1` | tracks ahead to speculatively resolve |
 | `YTDLP_CONCURRENT_EXTRACTS` | `1` | full per-video resolves (stream URL) run at this concurrency — kept at 1 by default to avoid CPU contention on a single-vCPU box |
-| `YTDLP_CURATION_CONCURRENCY` | `3` | clamped 1–6; concurrency for lighter `--flat-playlist` search listings, separate from the above |
+| `YTDLP_CURATION_CONCURRENCY` | `2` | clamped 1–6; concurrency for lighter `--flat-playlist` search listings, separate from the above |
 | `YTDLP_RESOLVE_CACHE_SIZE` | `128` | resolved-stream cache entries, min `16` |
 | `YTDLP_RESOLVE_CACHE_TTL_SECONDS` | `1800` | min `60` |
 | `YTDLP_SEARCH_CACHE_SIZE` | `200` | cached raw search-result sets, min `16` |
@@ -189,7 +193,7 @@ Also runs in CI on every push to `main` (see [CI](#ci) below) — `build`/`deplo
 
 Deployment is fully automated via `.github/workflows/release.yml`: every push to `main` builds a release binary and does an atomic swap + `systemctl restart pyxeebotr` on the server over SSH, with automatic rollback if the service doesn't come back up. Pushing a `v*` tag also builds and attaches the binary to a GitHub Release, but only a push to `main` triggers the actual deploy step. Nothing manual is needed for a normal deploy — just push to `main`.
 
-`deploy.sh` + `deploy/pyxeebotr.service` are a manual fallback (e.g. for a fresh server, or deploying without going through GitHub Actions) — both target the same `pyxeebotr` service at `~/pyxeebotr` that `release.yml` uses, so they should stay in sync with it if that ever changes.
+`deploy.sh` + `deploy/pyxeebotr.service` are a manual fallback (e.g. for a fresh server, or deploying without going through GitHub Actions) — both target the same `pyxeebotr` service at `~/pyxeebotr` that `release.yml` uses, so they should stay in sync with it if that ever changes. On a genuinely fresh host, run `deploy/setup-swap.sh` once first — the systemd unit caps the service at 800M (`MemoryHigh=650M`/`MemoryMax=800M`), and a fresh e2.micro-class box has no swap configured to fall back on under pressure.
 
 > ⚠️ **Migration files are append-only once deployed.** sqlx checksums each migration file; changing so much as a comment on one that's already run in production breaks startup with `migration N was previously applied but has been modified`. A fix always means a *new* migration file, never an edit to an old one.
 
@@ -207,16 +211,10 @@ Deployment is fully automated via `.github/workflows/release.yml`: every push to
 
 `deploy` still only runs on a push to `main`, after `build` succeeds.
 
-`.cargo/audit.toml` exists with some documented `cargo audit` exceptions, but no CI job currently runs it — a prior attempt surfaced findings outside those exceptions and needed `checks: write` permission this workflow doesn't grant. Run `cargo audit` locally if you want it, or wire it up properly later.
+`cargo audit` isn't currently wired into CI — a prior attempt surfaced findings that needed a `checks: write` permission this workflow doesn't grant. Run it locally if you want it, or wire it up properly later.
 
 ---
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-<div align="center">
-
-*<sub>The copyright holder name in <a href="LICENSE">LICENSE</a> was inferred from this repo's GitHub owner, not independently confirmed — update it if that's wrong.</sub>*
-
-</div>
