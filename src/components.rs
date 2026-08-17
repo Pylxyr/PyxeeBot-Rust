@@ -13,6 +13,7 @@ pub const NP_LOOP: &str = "np:loop";
 pub const NP_CLOSE: &str = "np:close";
 pub const SEARCH_PICK: &str = "search:pick";
 pub const SEARCH_PAGE_PREFIX: &str = "search:page:";
+pub const SEARCH_CLOSE: &str = "search:close";
 pub const SEARCH_PAGE_SIZE: usize = 5;
 pub const SEARCH_MAX_PAGES: usize = 3;
 
@@ -140,11 +141,15 @@ pub fn search_select_menu(results: &[Track], page: usize) -> Vec<CreateActionRow
     ));
 
     let total_pages = search_page_count(results.len());
+    let close_button = CreateButton::new(SEARCH_CLOSE)
+        .label("Close")
+        .style(ButtonStyle::Danger);
+
     if total_pages <= 1 {
-        return vec![select_row];
+        return vec![select_row, CreateActionRow::Buttons(vec![close_button])];
     }
 
-    let buttons = (0..total_pages)
+    let mut buttons: Vec<CreateButton> = (0..total_pages)
         .map(|p| {
             CreateButton::new(format!("{SEARCH_PAGE_PREFIX}{p}"))
                 .label(format!("Page {}", p + 1))
@@ -156,6 +161,7 @@ pub fn search_select_menu(results: &[Track], page: usize) -> Vec<CreateActionRow
                 .disabled(p == page)
         })
         .collect();
+    buttons.push(close_button);
     vec![select_row, CreateActionRow::Buttons(buttons)]
 }
 

@@ -91,7 +91,7 @@ async fn handle_component_interaction(
                 .create_response(ctx, components::update_response_embed(embed, buttons))
                 .await;
         }
-        components::NP_CLOSE => {
+        components::NP_CLOSE | components::SEARCH_CLOSE => {
             let _ = interaction
                 .create_response(ctx, CreateInteractionResponse::Acknowledge)
                 .await;
