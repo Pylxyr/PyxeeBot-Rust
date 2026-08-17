@@ -370,27 +370,21 @@ async fn on_error(error: poise::FrameworkError<'_, Arc<BotData>, anyhow::Error>)
         }
         // Overrides poise's default "Too many arguments were passed / Please
         // check the help menu..." — that message never names the command you
-        // actually typed, which is especially confusing for zero-argument
-        // commands invoked via a short alias (e.g. `!s` for `skip`, which
-        // reads like it might mean `search`).
-        poise::FrameworkError::ArgumentParse { ctx, input, error } => {
+        // actually typed, which matters for zero-argument commands where the
+        // usage isn't obvious from the error alone.
+        poise::FrameworkError::ArgumentParse {
+            ctx, input, error, ..
+        } => {
             let prefix = ctx.prefix();
             let invoked = ctx.invoked_command_name();
-            let canonical = ctx.command().name.as_str();
 
             let body = if error
                 .downcast_ref::<poise::prefix_argument::TooManyArguments>()
                 .is_some()
             {
-                let mut msg = format!(
+                format!(
                     "`{prefix}{invoked}` doesn't take any extra text — just `{prefix}{invoked}` on its own."
-                );
-                if invoked == "s" && canonical == "skip" {
-                    msg.push_str(&format!(
-                        " Looking to search instead? Try `{prefix}search <query>`."
-                    ));
-                }
-                msg
+                )
             } else if error
                 .downcast_ref::<poise::prefix_argument::TooFewArguments>()
                 .is_some()

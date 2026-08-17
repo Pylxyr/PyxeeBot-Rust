@@ -303,7 +303,7 @@ async fn play_or_queue(ctx: Context<'_>, query: String, front: bool) -> anyhow::
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command, guild_only, aliases("s"))]
+#[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn skip(ctx: Context<'_>) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());

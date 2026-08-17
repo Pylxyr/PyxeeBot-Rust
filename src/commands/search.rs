@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::bot::Context;
 
-#[poise::command(prefix_command, slash_command, guild_only)]
+#[poise::command(prefix_command, slash_command, guild_only, aliases("s"))]
 pub async fn search(ctx: Context<'_>, #[rest] query: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
