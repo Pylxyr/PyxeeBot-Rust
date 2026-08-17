@@ -133,8 +133,12 @@ pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
     }
     let data = ctx.data();
     let player = data.player_for(guild_id).await;
+    // Read before leave() for the same race-free reason as stop() above —
+    // leave() also disables autoplay as a side effect.
+    let stay_was_on = data.db.get_stay_connected(guild_id.get()).await;
+    let autoplay_was_on = data.db.get_autoplay(guild_id.get()).await;
     let result = player.leave().await;
-    if data.db.get_stay_connected(guild_id.get()).await {
+    if stay_was_on {
         let _ = data
             .db
             .set_stay_connected(guild_id.get(), false, &data.config.default_prefix)
@@ -142,9 +146,26 @@ pub async fn leave(ctx: Context<'_>) -> anyhow::Result<()> {
         player.set_stay_connected(false);
     }
     clear_guild_side_state(data, guild_id);
+
+    let mut turned_off = Vec::new();
+    if stay_was_on {
+        turned_off.push("stay-connected");
+    }
+    if autoplay_was_on {
+        turned_off.push("autoplay");
+    }
+    let suffix = if turned_off.is_empty() {
+        String::new()
+    } else {
+        format!(" ({} turned off)", turned_off.join(" and "))
+    };
+
     match result {
-        Ok(true) => ctx.say("Left the voice channel.").await?,
-        Ok(false) => ctx.say("Not currently in a voice channel.").await?,
+        Ok(true) => ctx.say(format!("Left the voice channel.{suffix}")).await?,
+        Ok(false) => {
+            ctx.say(format!("Not currently in a voice channel.{suffix}"))
+                .await?
+        }
         Err(e) => ctx.say(format!("Couldn't leave: {e}")).await?,
     };
     Ok(())
@@ -290,7 +311,12 @@ pub async fn skip(ctx: Context<'_>) -> anyhow::Result<()> {
     if !super::helpers::require_dj(ctx).await? {
         return Ok(());
     }
-    ctx.data().player_for(guild_id).await.skip();
+    let player = ctx.data().player_for(guild_id).await;
+    if player.snapshot().current.is_none() {
+        ctx.say("Nothing is playing to skip.").await?;
+        return Ok(());
+    }
+    player.skip();
     ctx.say("Skipped.").await?;
     Ok(())
 }
@@ -372,9 +398,19 @@ pub async fn stop(ctx: Context<'_>) -> anyhow::Result<()> {
     if !super::helpers::require_same_voice_channel(ctx).await? {
         return Ok(());
     }
+    // Read before stop() so the message reflects what was actually true
+    // beforehand — stop() disables autoplay as a side effect, but does so
+    // fire-and-forget with no reply, so this is the only race-free way to
+    // know whether that side effect actually did anything.
+    let autoplay_was_on = ctx.data().db.get_autoplay(guild_id.get()).await;
     ctx.data().player_for(guild_id).await.stop();
     clear_guild_side_state(ctx.data(), guild_id);
-    ctx.say("Stopped and cleared the queue.").await?;
+    let msg = if autoplay_was_on {
+        "Stopped, cleared the queue, and turned off autoplay."
+    } else {
+        "Stopped and cleared the queue."
+    };
+    ctx.say(msg).await?;
     Ok(())
 }
 
@@ -386,8 +422,17 @@ pub async fn pause(ctx: Context<'_>) -> anyhow::Result<()> {
     if !super::helpers::require_same_voice_channel(ctx).await? {
         return Ok(());
     }
-    ctx.data().player_for(guild_id).await.pause().await;
-    ctx.say("Paused.").await?;
+    let player = ctx.data().player_for(guild_id).await;
+    let snapshot = player.snapshot();
+    let msg = if snapshot.current.is_none() {
+        "Nothing is playing right now."
+    } else if snapshot.is_paused {
+        "Already paused."
+    } else {
+        player.pause().await;
+        "Paused."
+    };
+    ctx.say(msg).await?;
     Ok(())
 }
 
@@ -399,8 +444,17 @@ pub async fn resume(ctx: Context<'_>) -> anyhow::Result<()> {
     if !super::helpers::require_same_voice_channel(ctx).await? {
         return Ok(());
     }
-    ctx.data().player_for(guild_id).await.resume().await;
-    ctx.say("Resumed.").await?;
+    let player = ctx.data().player_for(guild_id).await;
+    let snapshot = player.snapshot();
+    let msg = if snapshot.current.is_none() {
+        "Nothing is playing right now."
+    } else if !snapshot.is_paused {
+        "Already playing."
+    } else {
+        player.resume().await;
+        "Resumed."
+    };
+    ctx.say(msg).await?;
     Ok(())
 }
 

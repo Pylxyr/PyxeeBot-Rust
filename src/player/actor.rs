@@ -854,9 +854,12 @@ impl PlayerActor {
         self.autoplay_prefetch_pending = false;
         if let Some(track) = track.filter(|_| self.state.autoplay && self.call.is_some()) {
             let was_idle = self.state.current.is_none();
-            if was_idle {
-                self.announce_autoplay(&track);
-            }
+            // Announce regardless of was_idle: with the proactive prefetch
+            // (maybe_prefetch_autoplay), this now usually lands while the
+            // previous track is still playing, so was_idle is normally
+            // false here — gating the announcement on it would mean the
+            // user silently never sees "Autoplay added" anymore.
+            self.announce_autoplay(&track);
             self.state.push_back(Arc::new(track));
             if was_idle {
                 self.advance_and_resolve_next();

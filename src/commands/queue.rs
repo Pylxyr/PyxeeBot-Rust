@@ -61,7 +61,12 @@ pub async fn shuffle(ctx: Context<'_>) -> anyhow::Result<()> {
     if !require_dj(ctx).await? {
         return Ok(());
     }
-    ctx.data().player_for(guild_id).await.shuffle();
+    let player = ctx.data().player_for(guild_id).await;
+    if player.snapshot().queue.len() < 2 {
+        ctx.say("Not enough tracks queued to shuffle.").await?;
+        return Ok(());
+    }
+    player.shuffle();
     ctx.say("Queue shuffled.").await?;
     Ok(())
 }
