@@ -17,12 +17,19 @@ jobs:
   # CI generates + commits Cargo.lock so --locked below has something to lock against.
   lockfile:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required to allow rebasing on top of remote commits
+
       - uses: dtolnay/rust-toolchain@stable
+
       - run: cargo generate-lockfile
+
       - id: commit
         run: |
           set -e
@@ -33,7 +40,11 @@ jobs:
               git config user.name "github-actions[bot]"
               git config user.email "github-actions[bot]@users.noreply.github.com"
               git commit -m "chore: update Cargo.lock [skip ci]"
-              git push
+              
+              # Rebase onto the latest remote branch before pushing
+              git pull --rebase origin main
+              git push origin main
+              
               NEW_SHA="$(git rev-parse HEAD)"
             fi
           fi
