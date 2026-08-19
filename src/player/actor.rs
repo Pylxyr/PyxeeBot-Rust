@@ -21,6 +21,11 @@ use super::lifecycle;
 use super::queue::PlayerState;
 use super::snapshot::PlayerSnapshot;
 
+// A pause at least this long is treated as long enough that the stream's
+// underlying HTTP connection may have gone stale — see the comment on
+// `resume_seek_after_reconnect`.
+const STALE_CONNECTION_PAUSE_THRESHOLD: Duration = Duration::from_secs(90);
+
 #[derive(Debug)]
 pub struct PlayOutcome {
     pub position: usize,
@@ -152,6 +157,13 @@ pub struct PlayerActor {
     track_started_at: Option<std::time::Instant>,
     paused_since: Option<std::time::Instant>,
     paused_total: std::time::Duration,
+    // If a pause lasts at least this long, the underlying HTTP connection to
+    // the stream's CDN has likely gone idle-killed or degraded — most CDN
+    // edges/proxies don't hold a "download" connection open with no bytes
+    // moving for more than a couple of minutes. Set on Resume when crossed;
+    // finish_starting_track seeks the freshly reconnected track back to
+    // this position once the rebuild completes.
+    resume_seek_after_reconnect: Option<std::time::Duration>,
     last_snapshot_hash: Option<u64>,
     retried_current_track: bool,
 
@@ -217,6 +229,7 @@ impl PlayerActor {
             track_started_at: None,
             paused_since: None,
             paused_total: std::time::Duration::ZERO,
+            resume_seek_after_reconnect: None,
             last_snapshot_hash: None,
             retried_current_track: false,
             last_finished_generation: None,
@@ -382,12 +395,16 @@ impl PlayerActor {
                 let _ = reply.send(());
             }
             PlayerCommand::Resume { reply } => {
-                if let Some(handle) = &self.current_handle {
+                let pause_duration = self.paused_since.take().map(|since| since.elapsed());
+                if let Some(dur) = pause_duration {
+                    self.paused_total += dur;
+                }
+                let stale = pause_duration.is_some_and(|d| d >= STALE_CONNECTION_PAUSE_THRESHOLD);
+                if stale && self.current_handle.is_some() {
+                    self.reconnect_after_long_pause().await;
+                } else if let Some(handle) = &self.current_handle {
                     let _ = handle.play();
                     self.is_paused = false;
-                    if let Some(since) = self.paused_since.take() {
-                        self.paused_total += since.elapsed();
-                    }
                 }
                 self.publish_snapshot();
                 let _ = reply.send(());
@@ -906,6 +923,45 @@ impl PlayerActor {
         }
     }
 
+    // Called from Resume when the pause was long enough that the stream's
+    // connection may have gone stale. Drops the old handle (its eventual
+    // TrackEnd/Error notification carries the pre-bump generation, so the
+    // existing generation guard in handle_track_finished discards it as
+    // stale — see spawn_resolve_for_current below) and re-resolves the same
+    // track from scratch, recording the current position so
+    // finish_starting_track can seek the fresh connection back to it.
+    async fn reconnect_after_long_pause(&mut self) {
+        let Some(track) = self.state.current.clone() else {
+            self.is_paused = false;
+            return;
+        };
+        let resume_at = Duration::from_secs(self.elapsed_secs().max(0) as u64);
+        tracing::info!(
+            guild_id = %self.guild_id,
+            title = %track.title,
+            resume_secs = resume_at.as_secs(),
+            "resume: pause was long enough that the stream connection may have gone stale, reconnecting instead of trusting it",
+        );
+        if let Some(handle) = self.current_handle.take() {
+            let _ = handle.stop();
+        }
+        // Deliberately not clearing is_paused here: there's no handle to
+        // actually resume until the reconnect below completes, so leaving
+        // it true keeps `!nowplaying`/`!pause` accurate for that brief
+        // window (a `!pause` landing here would otherwise appear to
+        // succeed while silently doing nothing, since there's no handle
+        // yet to pause). finish_starting_track sets it false once the
+        // fresh handle is actually attached.
+        self.resume_seek_after_reconnect = Some(resume_at);
+
+        // The cached resolve may itself be nearing expiry after sitting
+        // unused for the pause — don't trust it, force a fresh one.
+        // Awaited directly (not spawned) so it's guaranteed to land before
+        // the resolve kicked off below can race it.
+        self.extractor.invalidate_stream(&track.webpage_url).await;
+        self.spawn_resolve_for_current();
+    }
+
     fn spawn_resolve_for_current(&mut self) {
         let Some(track) = self.state.current.clone() else {
             return;
@@ -1017,11 +1073,32 @@ impl PlayerActor {
         let _ = handle.add_event(Event::Track(TrackEvent::Error), error_notifier);
         let _ = handle.set_volume(f32::from(self.volume) / 100.0);
 
-        self.current_handle = Some(handle);
+        self.current_handle = Some(handle.clone());
         self.is_paused = false;
-        self.track_started_at = Some(std::time::Instant::now());
         self.paused_since = None;
-        self.paused_total = std::time::Duration::ZERO;
+        if let Some(resume_at) = self.resume_seek_after_reconnect.take() {
+            // Reflect the resumed position in our own tracking immediately —
+            // !nowplaying is accurate right away, independent of whether the
+            // seek below actually lands. If it fails, playback continues
+            // from the start of the fresh connection rather than erroring
+            // out entirely; a clean restart beats getting stuck silent.
+            self.track_started_at = Some(
+                std::time::Instant::now()
+                    .checked_sub(resume_at)
+                    .unwrap_or_else(std::time::Instant::now),
+            );
+            self.paused_total = std::time::Duration::ZERO;
+            let guild_id = self.guild_id;
+            let title = track.title.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle.seek_async(resume_at).await {
+                    tracing::warn!(%guild_id, %title, error = ?e, "resume-after-long-pause: seek failed, continuing from the start of the reconnected stream");
+                }
+            });
+        } else {
+            self.track_started_at = Some(std::time::Instant::now());
+            self.paused_total = std::time::Duration::ZERO;
+        }
         tracing::info!(guild_id = %self.guild_id, title = %track.title, "finish_starting_track: playback started");
 
         let db = self.db.clone();

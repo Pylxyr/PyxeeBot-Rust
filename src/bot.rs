@@ -377,30 +377,44 @@ async fn on_error(error: poise::FrameworkError<'_, Arc<BotData>, anyhow::Error>)
         } => {
             let prefix = ctx.prefix();
             let invoked = ctx.invoked_command_name();
+            // Built once, used by both branches below: TooManyArguments
+            // isn't only a zero-argument-command problem. `setprefix`,
+            // `lyrics`, and every `playlist` subcommand take a plain
+            // (non-`#[rest]`) String, so a multi-word value typed without
+            // quotes also lands here — poise only ever consumes one word
+            // per non-rest parameter. Whether the right message is "takes
+            // no arguments" or "here's the usage" depends on whether the
+            // command actually has any.
+            let usage: String = ctx
+                .command()
+                .parameters
+                .iter()
+                .map(|p| {
+                    if p.required {
+                        format!(" <{}>", p.name)
+                    } else {
+                        format!(" [{}]", p.name)
+                    }
+                })
+                .collect();
 
             let body = if error
                 .downcast_ref::<poise::prefix_argument::TooManyArguments>()
                 .is_some()
             {
-                format!(
-                    "`{prefix}{invoked}` doesn't take any extra text — just `{prefix}{invoked}` on its own."
-                )
+                if usage.is_empty() {
+                    format!(
+                        "`{prefix}{invoked}` doesn't take any extra text — just `{prefix}{invoked}` on its own."
+                    )
+                } else {
+                    format!(
+                        "`{prefix}{invoked}` got more words than expected — usage: `{prefix}{invoked}{usage}`. If a value has spaces in it, quote it."
+                    )
+                }
             } else if error
                 .downcast_ref::<poise::prefix_argument::TooFewArguments>()
                 .is_some()
             {
-                let usage: String = ctx
-                    .command()
-                    .parameters
-                    .iter()
-                    .map(|p| {
-                        if p.required {
-                            format!(" <{}>", p.name)
-                        } else {
-                            format!(" [{}]", p.name)
-                        }
-                    })
-                    .collect();
                 format!("`{prefix}{invoked}` needs more info — usage: `{prefix}{invoked}{usage}`")
             } else {
                 match input {

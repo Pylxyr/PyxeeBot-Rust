@@ -80,7 +80,7 @@ pub async fn dj(ctx: Context<'_>) -> anyhow::Result<()> {
 }
 
 #[poise::command(prefix_command, slash_command, guild_only)]
-pub async fn setprefix(ctx: Context<'_>, prefix: String) -> anyhow::Result<()> {
+pub async fn setprefix(ctx: Context<'_>, #[rest] prefix: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };

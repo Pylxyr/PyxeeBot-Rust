@@ -15,7 +15,7 @@ pub async fn ping(ctx: Context<'_>) -> anyhow::Result<()> {
 }
 
 #[poise::command(prefix_command, slash_command, guild_only)]
-pub async fn lyrics(ctx: Context<'_>, query: Option<String>) -> anyhow::Result<()> {
+pub async fn lyrics(ctx: Context<'_>, #[rest] query: Option<String>) -> anyhow::Result<()> {
     let query = match query {
         Some(q) => q,
         None => {

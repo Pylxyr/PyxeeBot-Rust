@@ -29,7 +29,7 @@ pub async fn playlist(ctx: Context<'_>) -> anyhow::Result<()> {
 }
 
 #[poise::command(prefix_command, slash_command, guild_only)]
-pub async fn save(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
+pub async fn save(ctx: Context<'_>, #[rest] name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
@@ -57,7 +57,7 @@ pub async fn save(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
 }
 
 #[poise::command(prefix_command, slash_command, guild_only)]
-pub async fn load(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
+pub async fn load(ctx: Context<'_>, #[rest] name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
@@ -130,7 +130,7 @@ pub async fn list(ctx: Context<'_>) -> anyhow::Result<()> {
 }
 
 #[poise::command(prefix_command, slash_command, guild_only)]
-pub async fn show(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
+pub async fn show(ctx: Context<'_>, #[rest] name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
@@ -155,7 +155,7 @@ pub async fn show(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
 }
 
 #[poise::command(prefix_command, slash_command, guild_only)]
-pub async fn delete(ctx: Context<'_>, name: String) -> anyhow::Result<()> {
+pub async fn delete(ctx: Context<'_>, #[rest] name: String) -> anyhow::Result<()> {
     let Some(guild_id) = ctx.guild_id() else {
         return Ok(());
     };
