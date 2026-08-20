@@ -162,8 +162,14 @@ pub struct PlayerActor {
     // edges/proxies don't hold a "download" connection open with no bytes
     // moving for more than a couple of minutes. Set on Resume when crossed;
     // finish_starting_track seeks the freshly reconnected track back to
-    // this position once the rebuild completes.
-    resume_seek_after_reconnect: Option<std::time::Duration>,
+    // this position once the rebuild completes. Keyed by webpage_url, not
+    // just a bare duration: if a Skip/Stop/natural track-end races ahead of
+    // the reconnect's resolve and starts a genuinely different track before
+    // it lands, finish_starting_track must not apply a leftover seek target
+    // meant for the track that got interrupted. Surviving a same-track
+    // *retry* (a transient resolve failure on the reconnect itself) is fine
+    // and intentional — that's still the track this seek was meant for.
+    resume_seek_after_reconnect: Option<(String, std::time::Duration)>,
     last_snapshot_hash: Option<u64>,
     retried_current_track: bool,
 
@@ -952,7 +958,7 @@ impl PlayerActor {
         // succeed while silently doing nothing, since there's no handle
         // yet to pause). finish_starting_track sets it false once the
         // fresh handle is actually attached.
-        self.resume_seek_after_reconnect = Some(resume_at);
+        self.resume_seek_after_reconnect = Some((track.webpage_url.clone(), resume_at));
 
         // The cached resolve may itself be nearing expiry after sitting
         // unused for the pause — don't trust it, force a fresh one.
@@ -1076,7 +1082,15 @@ impl PlayerActor {
         self.current_handle = Some(handle.clone());
         self.is_paused = false;
         self.paused_since = None;
-        if let Some(resume_at) = self.resume_seek_after_reconnect.take() {
+        // .take() unconditionally: whether or not it matches this track,
+        // a pending marker has no valid future use past this point — the
+        // next finish_starting_track call is always its only chance to
+        // apply, matched or not.
+        let seek_at = match self.resume_seek_after_reconnect.take() {
+            Some((url, resume_at)) if url == track.webpage_url => Some(resume_at),
+            _ => None,
+        };
+        if let Some(resume_at) = seek_at {
             // Reflect the resumed position in our own tracking immediately —
             // !nowplaying is accurate right away, independent of whether the
             // seek below actually lands. If it fails, playback continues
