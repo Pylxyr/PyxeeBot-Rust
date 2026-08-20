@@ -96,3 +96,55 @@ fn encode_path_segment(s: &str) -> String {
     }
     out
 }
+
+// Strips bracketed/parenthesized clutter (both ASCII and full-width CJK
+// brackets) from a raw video title before it's used as a lyrics search
+// query — e.g. "【MV】 MYTH&ROID - STYX HELIX(OFFICIAL)" becomes
+// "MYTH&ROID - STYX HELIX". Deliberately doesn't touch a bare " - "
+// separator: on YouTube that's overwhelmingly "Artist - Title", and
+// leaving it in place means the cleaned query still carries the artist
+// name for catalog searches that need it to disambiguate.
+pub fn clean_query(title: &str) -> String {
+    let mut cleaned = String::with_capacity(title.len());
+    let mut depth: i32 = 0;
+    for ch in title.chars() {
+        match ch {
+            '(' | '[' | '{' | '【' | '「' | '『' | '〈' | '《' => depth += 1,
+            ')' | ']' | '}' | '】' | '」' | '』' | '〉' | '》' => depth = (depth - 1).max(0),
+            _ if depth == 0 => cleaned.push(ch),
+            _ => {}
+        }
+    }
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_query;
+
+    #[test]
+    fn strips_bracketed_clutter_but_keeps_the_artist_separator() {
+        assert_eq!(
+            clean_query("【MV】 MYTH&ROID - STYX HELIX(OFFICIAL)"),
+            "MYTH&ROID - STYX HELIX"
+        );
+    }
+
+    #[test]
+    fn leaves_a_clean_title_unchanged() {
+        assert_eq!(clean_query("Coldplay - Yellow"), "Coldplay - Yellow");
+    }
+
+    #[test]
+    fn handles_multiple_and_nested_bracket_styles() {
+        assert_eq!(
+            clean_query("Artist - Title [Official Video] (4K) {Remastered}"),
+            "Artist - Title"
+        );
+    }
+
+    #[test]
+    fn collapses_leftover_whitespace() {
+        assert_eq!(clean_query("  Artist   -   Title  "), "Artist - Title");
+    }
+}

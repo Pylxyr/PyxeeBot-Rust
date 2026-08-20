@@ -16,7 +16,7 @@ pub async fn ping(ctx: Context<'_>) -> anyhow::Result<()> {
 
 #[poise::command(prefix_command, slash_command, guild_only)]
 pub async fn lyrics(ctx: Context<'_>, #[rest] query: Option<String>) -> anyhow::Result<()> {
-    let query = match query {
+    let raw_query = match query {
         Some(q) => q,
         None => {
             let Some(guild_id) = ctx.guild_id() else {
@@ -31,6 +31,11 @@ pub async fn lyrics(ctx: Context<'_>, #[rest] query: Option<String>) -> anyhow::
             current.title.clone()
         }
     };
+    // Strip bracketed clutter either way — a manually-typed query is
+    // unaffected if it's already clean, but this is also what saves the
+    // no-args fallback (the raw video title) from tags like "【MV】" or
+    // "(Official Video)" that would otherwise go straight into the search.
+    let query = crate::lyrics::clean_query(&raw_query);
 
     let handle = ctx.say(format!("Looking up lyrics for `{query}`...")).await?;
     match ctx.data().lyrics.get_lyrics(&query).await {
@@ -54,10 +59,13 @@ pub async fn lyrics(ctx: Context<'_>, #[rest] query: Option<String>) -> anyhow::
                 .await?;
         }
         Ok(None) => {
+            let prefix = ctx.prefix();
             handle
                 .edit(
                     ctx,
-                    poise::CreateReply::default().content(format!("No lyrics found for `{query}`.")),
+                    poise::CreateReply::default().content(format!(
+                        "No lyrics found for `{query}`. If you only gave a song title, try adding the artist too — e.g. `{prefix}lyrics {query} <artist>`."
+                    )),
                 )
                 .await?;
         }
