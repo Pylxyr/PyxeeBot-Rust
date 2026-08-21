@@ -59,13 +59,25 @@ pub async fn lyrics(ctx: Context<'_>, #[rest] query: Option<String>) -> anyhow::
                 .await?;
         }
         Ok(None) => {
-            let prefix = ctx.prefix();
+            // Only suggest adding an artist when the query doesn't already
+            // look like it has one — clean_query() deliberately keeps a
+            // bare " - " (the Artist - Title convention), so the no-args
+            // now-playing fallback usually already includes it. Suggesting
+            // `!lyrics MYTH&ROID - STYX HELIX <artist>` when the artist is
+            // already sitting right there would just be confusing.
+            let hint = if query.contains(" - ") {
+                String::new()
+            } else {
+                let prefix = ctx.prefix();
+                format!(
+                    " If you only gave a song title, try adding the artist too — e.g. `{prefix}lyrics {query} <artist>`."
+                )
+            };
             handle
                 .edit(
                     ctx,
-                    poise::CreateReply::default().content(format!(
-                        "No lyrics found for `{query}`. If you only gave a song title, try adding the artist too — e.g. `{prefix}lyrics {query} <artist>`."
-                    )),
+                    poise::CreateReply::default()
+                        .content(format!("No lyrics found for `{query}`.{hint}")),
                 )
                 .await?;
         }

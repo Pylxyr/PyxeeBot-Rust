@@ -545,6 +545,13 @@ impl PlayerActor {
                     Ok(call) => {
                         self.call = Some(call);
                         self.channel_id = Some(channel_id);
+                        if self.state.current.is_some() {
+                            tracing::info!(
+                                guild_id = %self.guild_id,
+                                "rejoin: reconnecting the current track into the fresh connection",
+                            );
+                            self.resume_current_track_on_new_connection().await;
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(guild_id = %self.guild_id, error = %e, "rejoin failed");
@@ -937,20 +944,14 @@ impl PlayerActor {
     // track from scratch, recording the current position so
     // finish_starting_track can seek the fresh connection back to it.
     async fn reconnect_after_long_pause(&mut self) {
-        let Some(track) = self.state.current.clone() else {
+        if self.state.current.is_none() {
             self.is_paused = false;
             return;
-        };
-        let resume_at = Duration::from_secs(self.elapsed_secs().max(0) as u64);
+        }
         tracing::info!(
             guild_id = %self.guild_id,
-            title = %track.title,
-            resume_secs = resume_at.as_secs(),
             "resume: pause was long enough that the stream connection may have gone stale, reconnecting instead of trusting it",
         );
-        if let Some(handle) = self.current_handle.take() {
-            let _ = handle.stop();
-        }
         // Deliberately not clearing is_paused here: there's no handle to
         // actually resume until the reconnect below completes, so leaving
         // it true keeps `!nowplaying`/`!pause` accurate for that brief
@@ -958,12 +959,31 @@ impl PlayerActor {
         // succeed while silently doing nothing, since there's no handle
         // yet to pause). finish_starting_track sets it false once the
         // fresh handle is actually attached.
+        self.resume_current_track_on_new_connection().await;
+    }
+
+    // Rebuilds the current track's connection into whatever self.call
+    // currently is, seeking back to its current elapsed position. Shared by
+    // two callers: reconnect_after_long_pause above (the old connection is
+    // merely *suspect*), and Rejoin (the old connection is *gone* — a fresh
+    // Call was just established after e.g. a kick, and the old
+    // current_handle is bound to a Call that no longer exists at all; left
+    // untouched, the bot would rejoin the channel and sit silently doing
+    // nothing while still claiming a track is current).
+    async fn resume_current_track_on_new_connection(&mut self) {
+        let Some(track) = self.state.current.clone() else {
+            return;
+        };
+        let resume_at = Duration::from_secs(self.elapsed_secs().max(0) as u64);
+        if let Some(handle) = self.current_handle.take() {
+            let _ = handle.stop();
+        }
         self.resume_seek_after_reconnect = Some((track.webpage_url.clone(), resume_at));
 
         // The cached resolve may itself be nearing expiry after sitting
-        // unused for the pause — don't trust it, force a fresh one.
-        // Awaited directly (not spawned) so it's guaranteed to land before
-        // the resolve kicked off below can race it.
+        // unused — don't trust it, force a fresh one. Awaited directly (not
+        // spawned) so it's guaranteed to land before the resolve kicked off
+        // below can race it.
         self.extractor.invalidate_stream(&track.webpage_url).await;
         self.spawn_resolve_for_current();
     }
